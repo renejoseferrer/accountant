@@ -370,19 +370,47 @@ const server = http.createServer(async (req, res) => {
         if (Array.isArray(update.merchantRules)) state.merchantRules = update.merchantRules.slice(0, 1000);
         if (Array.isArray(update.taxDeductions)) state.taxDeductions = update.taxDeductions.slice(0, 5000);
         if (Array.isArray(update.accounts)) {
-          for (const updated of update.accounts) {
-            const account = state.accounts.find((item) => item.id === updated.id);
-            if (account && typeof updated.muted === "boolean") account.muted = updated.muted;
-            if (account && account.kind === "investment") {
-              const balance = Number(updated.balance);
-              const acb = Number(updated.acb);
-              if (!Number.isFinite(balance) || balance < 0 || !Number.isFinite(acb) || acb < 0) {
-                return send(res, 400, { error: "Investment balances and ACB must be non-negative numbers." });
-              }
-              account.balance = balance;
-              account.acb = acb;
-            }
+          const validAccounts = new Set(update.accounts.map((account) => account.id));
+          if (update.accounts.length > 500 || update.accounts.some((account) =>
+            !account.id || !String(account.name || "").trim() ||
+            !["cash", "investment", "liability"].includes(account.kind) ||
+            !["Partner A", "Partner B", "Joint"].includes(account.owner) ||
+            !Number.isFinite(Number(account.balance)) || Number(account.balance) < 0 ||
+            (account.kind === "liability" && [account.apr, account.minimumPayment, account.limit, account.startingBalance].some((value) => value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0))) ||
+            (account.kind === "investment" && [account.acb].some((value) => value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0)))
+          ) || validAccounts.size !== update.accounts.length) {
+            return send(res, 400, { error: "Accounts need a unique ID, name, valid owner and type, and non-negative numeric balances." });
           }
+          state.accounts = update.accounts;
+        }
+        if (Array.isArray(update.transactions)) {
+          if (update.transactions.length > 20000 || update.transactions.some((transaction) =>
+            !transaction.id || !normalizeDate(transaction.date) ||
+            !String(transaction.merchant || "").trim() ||
+            !Number.isFinite(Number(transaction.amount)) || Number(transaction.amount) <= 0 ||
+            !["income", "expense", "transfer"].includes(transaction.type) ||
+            !["Partner A", "Partner B", "Joint"].includes(transaction.owner)
+          )) {
+            return send(res, 400, { error: "Ledger entries need a date, description, positive amount, type, and valid owner." });
+          }
+          state.transactions = update.transactions;
+        }
+        if (Array.isArray(update.groceryReceipts)) {
+          const validBuckets = new Set(["Essentials", "Fun / Wants", "Debt Payoff", "General Savings", "Investments / Wealth"]);
+          if (update.groceryReceipts.length > 3000 || update.groceryReceipts.some((receipt) =>
+            !receipt.id || !String(receipt.merchant || "").trim() || !normalizeDate(receipt.date) ||
+            !Array.isArray(receipt.items) || receipt.items.length > 300 ||
+            !Number.isFinite(Number(receipt.tax)) || Number(receipt.tax) < 0 ||
+            receipt.items.some((item) => !String(item.name || "").trim() || !Number.isFinite(Number(item.amount)) || Number(item.amount) < 0 || !validBuckets.has(item.bucket))
+          )) {
+            return send(res, 400, { error: "Receipts need a store, valid date, tax, and items assigned to a budget bucket." });
+          }
+          state.groceryReceipts = update.groceryReceipts;
+        }
+        if (update.debtPlanExtraMonthly !== undefined) {
+          const extra = Number(update.debtPlanExtraMonthly);
+          if (!Number.isFinite(extra) || extra < 0) return send(res, 400, { error: "The snowball extra must be a non-negative amount." });
+          state.debtPlanExtraMonthly = extra;
         }
         writeData(state);
         return send(res, 200, { state });
@@ -433,7 +461,10 @@ const server = http.createServer(async (req, res) => {
               (description.includes(candidate.name.toLowerCase().split(" ")[0]) ||
                 (candidate.accountType === "Car loan" && /car loan|auto loan/.test(description)) ||
                 (candidate.accountType === "Credit card" && /visa|mastercard|credit card/.test(description))));
-            if (debt) debt.balance = Math.max(0, debt.balance - transaction.amount);
+            if (debt) {
+              debt.startingBalance ??= debt.balance;
+              debt.balance = Math.max(0, debt.balance - transaction.amount);
+            }
           }
           if (transaction.category === "Investment contribution") {
             const investment = state.accounts.find((candidate) => candidate.kind === "investment" && transaction.merchant.toLowerCase().includes(candidate.accountType.toLowerCase()));

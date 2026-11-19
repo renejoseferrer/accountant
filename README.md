@@ -45,3 +45,10 @@ It also continues to work as a normal website on desktop and mobile browsers.
 - The local Node server has optional Plaid Link endpoints; the Vercel adapter currently directs users to CSV import instead.
 
 Expected paydays and bills remain separate from actual balances. The app includes the 55/5/10/15/15 budget split, transaction routing, reconciliation, debt and investment views, and tax receipt export.
+
+## Debt plan, manual entries, and grocery receipts
+
+- The Debt Snowball screen sorts accounts and personal loans from smallest to largest by default, shows minimum payments and balance progress, and lets you record a monthly extra amount or choose another sort.
+- Baby Steps progress uses a $1,000 starter cushion, non-mortgage debt balances, and a three-month essential-spending estimate. The household’s savings and investment buckets show how the 15/15 portions relate to the stages; this is an educational guide.
+- Add or edit accounts and private loans from the Balance Sheet or Debt Snowball screen. Add/edit paydays and bills from Cash Flow, and enter or edit actual income, spending, and debt payments in the Smart Ledger. “Clear demo data” removes only the built-in sample records and keeps manual entries and saved grocery receipts.
+- Receipt OCR is performed in the browser using Tesseract.js; receipt images are not uploaded. The OCR library/engine requires internet access. Check the detected store, date, tax, line items, amounts, and budget buckets before saving. Only the reviewed receipt details are stored with household data.
