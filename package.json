@@ -1,0 +1,15 @@
+{
+  "name": "household-accountant",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A shared household finance dashboard and financial literacy coach",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.2.1"
+  }
+}

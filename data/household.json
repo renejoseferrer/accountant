@@ -1,0 +1,501 @@
+{
+  "household": "The Morgan Household",
+  "accounts": [
+    {
+      "id": "checking-a",
+      "name": "Everyday Chequing",
+      "institution": "Royal Bank of Canada",
+      "kind": "cash",
+      "bucket": "Chequing",
+      "owner": "Partner A",
+      "balance": 8420,
+      "last4": "4821",
+      "muted": false
+    },
+    {
+      "id": "checking-j",
+      "name": "Shared Household Chequing",
+      "institution": "Tangerine",
+      "kind": "cash",
+      "bucket": "Chequing",
+      "owner": "Joint",
+      "balance": 3250,
+      "last4": "1904",
+      "muted": false
+    },
+    {
+      "id": "hisa-b",
+      "name": "High-Interest Savings",
+      "institution": "EQ Bank",
+      "kind": "cash",
+      "bucket": "Savings",
+      "owner": "Partner B",
+      "balance": 6000,
+      "last4": "2056",
+      "muted": false
+    },
+    {
+      "id": "checking-b",
+      "name": "Partner B Chequing",
+      "institution": "CIBC",
+      "kind": "cash",
+      "bucket": "Chequing",
+      "owner": "Partner B",
+      "balance": 4600,
+      "last4": "6620",
+      "muted": false
+    },
+    {
+      "id": "emergency-j",
+      "name": "Household Emergency Fund",
+      "institution": "Tangerine",
+      "kind": "cash",
+      "bucket": "Emergency",
+      "owner": "Joint",
+      "balance": 5000,
+      "last4": "7619",
+      "muted": false
+    },
+    {
+      "id": "tfsa-a",
+      "name": "TFSA · Self-directed",
+      "institution": "Wealthsimple",
+      "kind": "investment",
+      "accountType": "TFSA",
+      "owner": "Partner A",
+      "balance": 28500,
+      "acb": 22100,
+      "allocation": {
+        "Equities": 55,
+        "ETFs": 30,
+        "Bonds": 10,
+        "Cash": 5
+      },
+      "last4": "6734"
+    },
+    {
+      "id": "rrsp-b",
+      "name": "Group RRSP",
+      "institution": "Sun Life",
+      "kind": "investment",
+      "accountType": "RRSP",
+      "owner": "Partner B",
+      "balance": 41200,
+      "acb": 36500,
+      "allocation": {
+        "Equities": 45,
+        "ETFs": 25,
+        "Bonds": 25,
+        "Cash": 5
+      },
+      "last4": "8820",
+      "manual": true
+    },
+    {
+      "id": "fhsa-b",
+      "name": "First Home Savings Account",
+      "institution": "Questrade",
+      "kind": "investment",
+      "accountType": "FHSA",
+      "owner": "Partner B",
+      "balance": 12500,
+      "acb": 10800,
+      "allocation": {
+        "Equities": 40,
+        "ETFs": 40,
+        "Bonds": 15,
+        "Cash": 5
+      },
+      "last4": "3327"
+    },
+    {
+      "id": "visa-j",
+      "name": "Visa Rewards",
+      "institution": "TD",
+      "kind": "liability",
+      "accountType": "Credit card",
+      "owner": "Joint",
+      "balance": 1240,
+      "limit": 10000,
+      "apr": 19.99,
+      "dueDate": "2026-11-24",
+      "last4": "4312"
+    },
+    {
+      "id": "car-a",
+      "name": "Vehicle loan",
+      "institution": "Scotiabank",
+      "kind": "liability",
+      "accountType": "Car loan",
+      "owner": "Partner A",
+      "balance": 9600,
+      "apr": 6.49,
+      "monthlyPayment": 385,
+      "dueDate": "2026-11-28",
+      "amortizationMonths": 28,
+      "last4": "1458"
+    }
+  ],
+  "transactions": [
+    {
+      "id": "t1",
+      "date": "2026-11-17",
+      "merchant": "Loblaws",
+      "amount": 150,
+      "category": "Groceries",
+      "owner": "Joint",
+      "account": "Visa Rewards",
+      "type": "expense",
+      "status": "Actual",
+      "mcc": "5411",
+      "last4": "4312",
+      "splits": [
+        {
+          "category": "Groceries",
+          "amount": 150
+        },
+        {
+          "category": "Groceries",
+          "amount": 0
+        }
+      ]
+    },
+    {
+      "id": "t2",
+      "date": "2026-11-16",
+      "merchant": "Visa payment",
+      "amount": 420,
+      "category": "Debt repayment",
+      "owner": "Joint",
+      "account": "Shared Household Chequing",
+      "type": "transfer",
+      "status": "Actual",
+      "note": "Paired with Visa Rewards · not an expense"
+    },
+    {
+      "id": "t3",
+      "date": "2026-11-15",
+      "merchant": "Paycheque · Northstar Design",
+      "amount": 3840,
+      "category": "Salary",
+      "owner": "Partner A",
+      "account": "Everyday Chequing",
+      "type": "income",
+      "status": "Actual"
+    },
+    {
+      "id": "t13",
+      "date": "2026-11-15",
+      "merchant": "Paycheque · Cedar Health",
+      "amount": 3100,
+      "category": "Salary",
+      "owner": "Partner B",
+      "account": "Partner B Chequing",
+      "type": "income",
+      "status": "Actual"
+    },
+    {
+      "id": "t14",
+      "date": "2026-11-01",
+      "merchant": "November rent",
+      "amount": 2250,
+      "category": "Housing & Utilities",
+      "owner": "Joint",
+      "account": "Shared Household Chequing",
+      "type": "expense",
+      "status": "Actual"
+    },
+    {
+      "id": "t15",
+      "date": "2026-11-09",
+      "merchant": "Home internet",
+      "amount": 89,
+      "category": "Housing & Utilities",
+      "owner": "Joint",
+      "account": "Shared Household Chequing",
+      "type": "expense",
+      "status": "Actual"
+    },
+    {
+      "id": "t4",
+      "date": "2026-11-14",
+      "merchant": "e-Transfer · Partner A",
+      "amount": 600,
+      "category": "Internal transfer",
+      "owner": "Joint",
+      "account": "Shared Household Chequing",
+      "type": "transfer",
+      "status": "Actual",
+      "note": "Neutral internal transfer"
+    },
+    {
+      "id": "t5",
+      "date": "2026-11-13",
+      "merchant": "Metro Grocery",
+      "amount": 96.42,
+      "category": "Groceries",
+      "owner": "Partner B",
+      "account": "Everyday Chequing",
+      "type": "expense",
+      "status": "Actual",
+      "mcc": "5411"
+    },
+    {
+      "id": "t6",
+      "date": "2026-11-12",
+      "merchant": "Hydro One",
+      "amount": 118.35,
+      "category": "Housing & Utilities",
+      "owner": "Joint",
+      "account": "Shared Household Chequing",
+      "type": "expense",
+      "status": "Actual"
+    },
+    {
+      "id": "t7",
+      "date": "2026-11-11",
+      "merchant": "Shell",
+      "amount": 72.16,
+      "category": "Transit & Fuel",
+      "owner": "Partner A",
+      "account": "Visa Rewards",
+      "type": "expense",
+      "status": "Actual",
+      "mcc": "5541",
+      "last4": "4312"
+    },
+    {
+      "id": "t8",
+      "date": "2026-11-10",
+      "merchant": "Netflix",
+      "amount": 18.99,
+      "category": "Subscriptions",
+      "owner": "Joint",
+      "account": "Visa Rewards",
+      "type": "expense",
+      "status": "Actual",
+      "mcc": "4899",
+      "last4": "4312"
+    },
+    {
+      "id": "t9",
+      "date": "2026-11-08",
+      "merchant": "Monthly TFSA contribution",
+      "amount": 500,
+      "category": "Investment contribution",
+      "owner": "Partner A",
+      "account": "Everyday Chequing",
+      "type": "transfer",
+      "status": "Actual",
+      "note": "Routed to TFSA · excluded from expenses"
+    },
+    {
+      "id": "t10",
+      "date": "2026-11-06",
+      "merchant": "Coffee Culture",
+      "amount": 14.8,
+      "category": "Dining",
+      "owner": "Partner B",
+      "account": "Visa Rewards",
+      "type": "expense",
+      "status": "Actual",
+      "mcc": "5812",
+      "last4": "4312"
+    },
+    {
+      "id": "t11",
+      "date": "2026-11-04",
+      "merchant": "City Childcare Centre",
+      "amount": 320,
+      "category": "Childcare",
+      "owner": "Joint",
+      "account": "Shared Household Chequing",
+      "type": "expense",
+      "status": "Actual"
+    },
+    {
+      "id": "t12",
+      "date": "2026-11-03",
+      "merchant": "Car loan payment",
+      "amount": 385,
+      "category": "Debt repayment",
+      "owner": "Partner A",
+      "account": "Everyday Chequing",
+      "type": "transfer",
+      "status": "Actual",
+      "note": "Principal + interest · excluded from expenses"
+    },
+    {
+      "id": "t16",
+      "date": "2026-11-07",
+      "merchant": "Transfer to high-interest savings",
+      "amount": 250,
+      "category": "General savings",
+      "owner": "Partner B",
+      "account": "Partner B Chequing",
+      "type": "transfer",
+      "status": "Actual",
+      "note": "Neutral internal transfer · counted toward general savings goal"
+    }
+  ],
+  "schedule": [
+    {
+      "id": "s1",
+      "name": "Partner A · Paycheque",
+      "type": "income",
+      "amount": 3840,
+      "grossAmount": 4800,
+      "date": "2026-11-29",
+      "cadence": "Bi-weekly",
+      "owner": "Partner A",
+      "status": "Expected"
+    },
+    {
+      "id": "s2",
+      "name": "Partner B · Paycheque",
+      "type": "income",
+      "amount": 3100,
+      "grossAmount": 4000,
+      "date": "2026-11-25",
+      "cadence": "Semi-monthly",
+      "owner": "Partner B",
+      "status": "Expected"
+    },
+    {
+      "id": "s3",
+      "name": "Rent",
+      "type": "bill",
+      "amount": 2250,
+      "date": "2026-12-01",
+      "cadence": "Monthly",
+      "owner": "Joint",
+      "status": "Expected"
+    },
+    {
+      "id": "s4",
+      "name": "Visa statement due",
+      "type": "bill",
+      "amount": 1240,
+      "date": "2026-11-24",
+      "cadence": "Monthly",
+      "owner": "Joint",
+      "status": "Expected"
+    },
+    {
+      "id": "s5",
+      "name": "Car loan",
+      "type": "bill",
+      "amount": 385,
+      "date": "2026-11-28",
+      "cadence": "Monthly",
+      "owner": "Partner A",
+      "status": "Expected"
+    },
+    {
+      "id": "s6",
+      "name": "Hydro One",
+      "type": "bill",
+      "amount": 120,
+      "date": "2026-12-08",
+      "cadence": "Monthly",
+      "owner": "Joint",
+      "status": "Expected"
+    },
+    {
+      "id": "s7",
+      "name": "Internet",
+      "type": "bill",
+      "amount": 89,
+      "date": "2026-12-10",
+      "cadence": "Monthly",
+      "owner": "Joint",
+      "status": "Expected"
+    }
+  ],
+  "taxDeductions": [
+    {
+      "id": "tax1",
+      "date": "2026-10-28",
+      "merchant": "Maple Leaf Dental",
+      "category": "Medical",
+      "amount": 185,
+      "owner": "Partner A",
+      "tag": "Dental receipt"
+    },
+    {
+      "id": "tax2",
+      "date": "2026-11-02",
+      "merchant": "Community Food Bank",
+      "category": "Donations",
+      "amount": 75,
+      "owner": "Partner B",
+      "tag": "Charitable receipt"
+    }
+  ],
+  "budget": [
+    {
+      "category": "Essentials",
+      "target": 55
+    },
+    {
+      "category": "Fun / Wants",
+      "target": 5
+    },
+    {
+      "category": "Debt Payoff",
+      "target": 10
+    },
+    {
+      "category": "General Savings",
+      "target": 15
+    },
+    {
+      "category": "Investments / Wealth",
+      "target": 15
+    }
+  ],
+  "merchantRules": [
+    {
+      "merchant": "Loblaws",
+      "category": "Groceries"
+    },
+    {
+      "merchant": "Metro Grocery",
+      "category": "Groceries"
+    },
+    {
+      "merchant": "Shell",
+      "category": "Transit & Fuel"
+    },
+    {
+      "merchant": "Netflix",
+      "category": "Subscriptions"
+    }
+  ],
+  "history": [
+    {
+      "month": "Jun",
+      "netWorth": 67200
+    },
+    {
+      "month": "Jul",
+      "netWorth": 68900
+    },
+    {
+      "month": "Aug",
+      "netWorth": 71400
+    },
+    {
+      "month": "Sep",
+      "netWorth": 74200
+    },
+    {
+      "month": "Oct",
+      "netWorth": 76900
+    },
+    {
+      "month": "Nov",
+      "netWorth": 98630
+    }
+  ]
+}
