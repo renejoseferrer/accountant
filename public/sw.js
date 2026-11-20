@@ -1,8 +1,9 @@
-const CACHE_NAME = "accountant-shell-v2";
+const CACHE_NAME = "accountant-shell-v3";
 const APP_SHELL = [
   "/",
   "/index.html",
   "/styles.css",
+  "/household-math.js",
   "/app.js",
   "/manifest.webmanifest",
   "/icons/accountant.svg",

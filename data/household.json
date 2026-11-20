@@ -66,10 +66,10 @@
       "balance": 28500,
       "acb": 22100,
       "allocation": {
-        "Equities": 55,
-        "ETFs": 30,
-        "Bonds": 10,
-        "Cash": 5
+        "Equities": "55.00",
+        "ETFs": "30.00",
+        "Bonds": "10.00",
+        "Cash": "5.00"
       },
       "last4": "6734"
     },
@@ -83,10 +83,10 @@
       "balance": 41200,
       "acb": 36500,
       "allocation": {
-        "Equities": 45,
-        "ETFs": 25,
-        "Bonds": 25,
-        "Cash": 5
+        "Equities": "45.00",
+        "ETFs": "25.00",
+        "Bonds": "25.00",
+        "Cash": "5.00"
       },
       "last4": "8820",
       "manual": true
@@ -101,10 +101,10 @@
       "balance": 12500,
       "acb": 10800,
       "allocation": {
-        "Equities": 40,
-        "ETFs": 40,
-        "Bonds": 15,
-        "Cash": 5
+        "Equities": "40.00",
+        "ETFs": "40.00",
+        "Bonds": "15.00",
+        "Cash": "5.00"
       },
       "last4": "3327"
     },
@@ -117,7 +117,8 @@
       "owner": "Joint",
       "balance": 1240,
       "limit": 10000,
-      "apr": 19.99,
+      "apr": "19.99",
+      "minimumPayment": 35,
       "dueDate": "2026-11-24",
       "last4": "4312"
     },
@@ -129,7 +130,7 @@
       "accountType": "Car loan",
       "owner": "Partner A",
       "balance": 9600,
-      "apr": 6.49,
+      "apr": "6.49",
       "monthlyPayment": 385,
       "dueDate": "2026-11-28",
       "amortizationMonths": 28,
@@ -435,23 +436,23 @@
   "budget": [
     {
       "category": "Essentials",
-      "target": 55
+      "target": "55.00"
     },
     {
       "category": "Fun / Wants",
-      "target": 5
+      "target": "5.00"
     },
     {
       "category": "Debt Payoff",
-      "target": 10
+      "target": "10.00"
     },
     {
       "category": "General Savings",
-      "target": 15
+      "target": "15.00"
     },
     {
       "category": "Investments / Wealth",
-      "target": 15
+      "target": "15.00"
     }
   ],
   "merchantRules": [

@@ -2,6 +2,7 @@ const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const HouseholdMath = require("./public/household-math.js");
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
@@ -29,7 +30,9 @@ function ensureDataFile() {
 
 function readData() {
   const data = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+  const before = JSON.stringify(data);
   normalizeMoneyState(data);
+  if (JSON.stringify(data) !== before) fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
   return data;
 }
 
@@ -39,10 +42,7 @@ function writeData(data) {
 }
 
 function moneyCents(value) {
-  const match = String(value ?? "0").trim().match(/^(-?)(\d+)(?:\.(\d*))?$/);
-  if (!match) return Math.round((Number(value) || 0) * 100);
-  const fraction = (match[3] || "").padEnd(3, "0");
-  return (match[1] === "-" ? -1 : 1) * (Number(match[2]) * 100 + Number(fraction.slice(0, 2)) + (Number(fraction[2]) >= 5 ? 1 : 0));
+  return HouseholdMath.toCents(value);
 }
 
 function normalizeMoneyState(state) {
@@ -53,8 +53,15 @@ function normalizeMoneyState(state) {
     }
   };
   (state.accounts || []).forEach((account) => {
+    if (account.id === "visa-j" && account.name === "Visa Rewards" &&
+        account.minimumPayment == null && account.monthlyPayment == null) {
+      account.minimumPayment = 35;
+    }
     ["balance", "startingBalance", "minimumPayment", "monthlyPayment", "limit", "acb"].forEach((key) => addCents(account, key));
-    if (account.apr !== undefined && account.apr !== null) account.apr = Number(account.apr).toFixed(2);
+    if (account.apr !== undefined && account.apr !== null) account.apr = HouseholdMath.fixedDecimal(String(account.apr), 2);
+    if (account.allocation) {
+      for (const key of Object.keys(account.allocation)) account.allocation[key] = HouseholdMath.fixedDecimal(String(account.allocation[key]), 2);
+    }
   });
   (state.transactions || []).forEach((transaction) => {
     addCents(transaction, "amount");
@@ -70,6 +77,7 @@ function normalizeMoneyState(state) {
     (receipt.items || []).forEach((item) => addCents(item, "amount"));
   });
   (state.history || []).forEach((item) => addCents(item, "netWorth"));
+  (state.budget || []).forEach((item) => { item.target = HouseholdMath.fixedDecimal(String(item.target), 2); });
   addCents(state, "debtPlanExtraMonthly");
   return state;
 }
@@ -330,49 +338,6 @@ async function syncPlaidItems(items) {
   return { imported, state };
 }
 
-function answerQuestion(question, requestedView, requestedJointShare) {
-  const state = readData();
-  const view = ["Partner A Only", "Partner B Only"].includes(requestedView) ? requestedView : "Combined Household";
-  const jointShare = Math.max(0, Math.min(100, Number(requestedJointShare) || 0));
-  const factor = (owner) => view === "Combined Household" ? 1 :
-    owner === view.replace(" Only", "") ? 1 : owner === "Joint" ? jointShare / 100 : 0;
-  const cents = (value) => Math.round((Number(value) || 0) * 100);
-  const totalCents = (records, value) => records.reduce((sum, record) => sum + Math.round(cents(value(record)) * factor(record.owner)), 0);
-  const fmt = (valueCents) => money(valueCents / 100);
-  const accounts = state.accounts.filter((account) => factor(account.owner) > 0);
-  const transactions = state.transactions.filter((transaction) => transaction.status === "Actual" && factor(transaction.owner) > 0);
-  const incomeCents = totalCents(transactions.filter((transaction) => transaction.type === "income"), (transaction) => transaction.amount);
-  const expenseCents = totalCents(transactions.filter((transaction) => transaction.type === "expense"), (transaction) => transaction.amount);
-  const netCents = incomeCents - expenseCents;
-  const savings = incomeCents ? Math.max(0, netCents / incomeCents) : 0;
-  const q = question.toLowerCase();
-  const viewLabel = view === "Combined Household" ? view : `${view} (joint share ${jointShare}%)`;
-  const transactionSources = (records) => records.length ? records.map((transaction) => `${transaction.id} ${fmt(Math.round(cents(transaction.amount) * factor(transaction.owner)))}`).join(", ") : "none";
-  const accountSources = (records) => records.length ? records.map((account) => `${account.id} ${fmt(Math.round(cents(account.balance) * factor(account.owner)))}`).join(", ") : "none";
-  if (/cash flow|cashflow|spend|expense/.test(q)) {
-    return `In ${viewLabel}, recorded income is ${fmt(incomeCents)} and spending is ${fmt(expenseCents)}. Net cash flow = income − spending = ${fmt(incomeCents)} − ${fmt(expenseCents)} = ${fmt(netCents)}. Transfers are excluded. Show your work: actual income transaction IDs and amounts: ${transactionSources(transactions.filter((transaction) => transaction.type === "income"))}; actual expense transaction IDs and amounts: ${transactionSources(transactions.filter((transaction) => transaction.type === "expense"))}.`;
-  }
-  if (/debt|pay.?off|loan/.test(q)) {
-    const debts = accounts.filter((account) => account.kind === "liability");
-    const debtCents = totalCents(debts, (account) => account.balance);
-    const high = debts.slice().sort((a, b) => Number(b.apr) - Number(a.apr))[0];
-    return `In ${viewLabel}, tracked debt totals ${fmt(debtCents)}${high ? `. ${high.name} (${high.id}) has the highest listed rate at ${Number(high.apr || 0).toFixed(2)}%` : ""}. Show your work: ${debts.map((account) => `${account.id} ${fmt(Math.round(cents(account.balance) * factor(account.owner)))}`).join(" + ") || "no debt accounts"} = ${fmt(debtCents)}. Pay required minimums first; the highest-rate suggestion is a comparison, not a payoff instruction.`;
-  }
-  if (/save|savings|invest/.test(q)) {
-    const relevant = transactions.filter((transaction) => ["income", "expense"].includes(transaction.type));
-    return `In ${viewLabel}, income is ${fmt(incomeCents)}, spending is ${fmt(expenseCents)}, and net is ${fmt(netCents)}. Savings-rate estimate = net ÷ income = ${fmt(netCents)} ÷ ${fmt(incomeCents)} = ${(savings * 100).toFixed(1)}%. Show your work: transaction IDs and amounts: ${transactionSources(relevant)}.`;
-  }
-  const assetAccounts = accounts.filter((account) => account.kind !== "liability");
-  const debts = accounts.filter((account) => account.kind === "liability");
-  const assetsCents = totalCents(assetAccounts, (account) => account.balance);
-  const debtCents = totalCents(debts, (account) => account.balance);
-  return `In ${viewLabel}, assets are ${fmt(assetsCents)}, liabilities are ${fmt(debtCents)}, and net worth is ${fmt(assetsCents)} − ${fmt(debtCents)} = ${fmt(assetsCents - debtCents)}. Show your work: asset account IDs and amounts: ${accountSources(assetAccounts)}; liability account IDs and amounts: ${accountSources(debts)}.`;
-}
-
-function money(value) {
-  return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.round((Number(value) || 0) * 100) / 100);
-}
-
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   try {
@@ -411,11 +376,11 @@ const server = http.createServer(async (req, res) => {
         const update = await body(req);
         const state = readData();
         if (Array.isArray(update.budget)) {
-          const targets = update.budget.map((item) => Number(item.target));
-          if (targets.some((value) => !Number.isFinite(value) || value < 0 || value > 100) || targets.reduce((a, b) => a + b, 0) !== 100) {
+          const targets = update.budget.map((item) => HouseholdMath.toCents(item.target));
+          if (targets.some((value) => !Number.isSafeInteger(value) || value < 0 || value > 10000) || targets.reduce((a, b) => a + b, 0) !== 10000) {
             return send(res, 400, { error: "Budget targets must be between 0 and 100 and add up to 100%." });
           }
-          state.budget = update.budget.map((item, index) => ({ ...state.budget[index], target: targets[index] }));
+          state.budget = update.budget.map((item, index) => ({ ...state.budget[index], target: HouseholdMath.fixedDecimal(String(item.target), 2) }));
         }
         if (Array.isArray(update.schedule)) {
           if (update.schedule.length > 300 || update.schedule.some((item) => !Number.isFinite(Number(item.amount)) || Number(item.amount) <= 0 || !normalizeDate(item.date))) {
@@ -514,7 +479,9 @@ const server = http.createServer(async (req, res) => {
             candidate.owner === transaction.owner &&
             (candidate.name.toLowerCase() === transaction.account.toLowerCase() || candidate.last4 === transaction.last4)
           );
-          if (transaction.type === "expense" && importedAccount?.kind === "liability") importedAccount.balance += transaction.amount;
+          if (transaction.type === "expense" && importedAccount?.kind === "liability") {
+            importedAccount.balance = (moneyCents(importedAccount.balance) + moneyCents(transaction.amount)) / 100;
+          }
           if (transaction.category === "Debt repayment") {
             const description = transaction.merchant.toLowerCase();
             const debt = state.accounts.find((candidate) => candidate.kind === "liability" &&
@@ -523,12 +490,12 @@ const server = http.createServer(async (req, res) => {
                 (candidate.accountType === "Credit card" && /visa|mastercard|credit card/.test(description))));
             if (debt) {
               debt.startingBalance ??= debt.balance;
-              debt.balance = Math.max(0, debt.balance - transaction.amount);
+              debt.balance = Math.max(0, moneyCents(debt.balance) - moneyCents(transaction.amount)) / 100;
             }
           }
           if (transaction.category === "Investment contribution") {
             const investment = state.accounts.find((candidate) => candidate.kind === "investment" && transaction.merchant.toLowerCase().includes(candidate.accountType.toLowerCase()));
-            if (investment) investment.balance += transaction.amount;
+            if (investment) investment.balance = (moneyCents(investment.balance) + moneyCents(transaction.amount)) / 100;
           }
           reconcileExpected(state, transaction);
         }
@@ -547,17 +514,13 @@ const server = http.createServer(async (req, res) => {
         if (Array.isArray(update.splits)) {
           const splits = update.splits.map((split) => ({ category: String(split.category).slice(0, 60), amount: Number(split.amount) }));
           if (splits.some((split) => !Number.isFinite(split.amount) || split.amount < 0) ||
-              Math.abs(splits.reduce((sum, split) => sum + split.amount, 0) - transaction.amount) > 0.01) {
+              splits.reduce((sum, split) => sum + moneyCents(split.amount), 0) !== moneyCents(transaction.amount)) {
             return send(res, 400, { error: "Split amounts must add up to the transaction total." });
           }
           transaction.splits = splits;
         }
         writeData(state);
         return send(res, 200, { state });
-      }
-      if (req.method === "POST" && url.pathname === "/api/ask") {
-        const { question, view, jointShare } = await body(req);
-        return send(res, 200, { answer: answerQuestion(String(question || "").slice(0, 1000), view, jointShare) });
       }
       if (req.method === "GET" && url.pathname === "/api/plaid/status") {
         return send(res, 200, { configured: Boolean(process.env.PLAID_CLIENT_ID && process.env.PLAID_SECRET) });
@@ -623,6 +586,7 @@ const server = http.createServer(async (req, res) => {
       "/index.html",
       "/styles.css",
       "/app.js",
+      "/household-math.js",
       "/manifest.webmanifest",
       "/sw.js",
       "/icons/accountant.svg",

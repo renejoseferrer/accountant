@@ -8,6 +8,7 @@ A two-person Canadian household finance dashboard with a responsive website and 
 2. From this folder, run `npm start`.
 3. Open `http://localhost:3000`.
 4. Choose Partner A or Partner B and use the local demo passcode `1234`.
+5. Run `npm test` for cent-accuracy, household-view, debt, and sorting checks; run `npm run build` for syntax checks.
 
 The local server stores changes in `.local-data/household.json` and leaves the tracked `data/household.json` demo seed unchanged. Local data and the demo passcode are for demonstration only.
 
@@ -41,15 +42,15 @@ It also continues to work as a normal website on desktop and mobile browsers.
 ## Data connections
 
 - CSV imports accept Date, Description/Merchant, and Amount columns, or separate Debit and Credit columns. Imports are deduplicated using transaction date, amount, account last four digits, and transaction type.
-- The Q&A assistant is a deterministic summary of verified household ledger data; it does not send financial data to an external AI service.
+- The app has no built-in chat. Muse is used outside the app; the dashboard keeps its written financial explanations.
 - The local Node server has optional Plaid Link endpoints; the Vercel adapter currently directs users to CSV import instead.
 
 ## Phase 1 accuracy notes
 
 - The app reports bank sync as not connected unless the server has Plaid credentials configured. CSV import remains available; the account manager is separate from the Plaid connection dialog.
 - Household date defaults use the `America/Edmonton` time zone.
-- Money inputs and stored household records are rounded to integer cents, and CAD amounts display two decimal places. Interest rates are normalized to fixed two-decimal strings.
-- The chat answers from the selected household view and includes the totals, calculations, and record IDs used.
+- Money records carry integer-cent values for calculations and CAD amounts display two decimal places. Interest rates and percentages are stored as fixed two-decimal strings.
+- Cash flow totals and category breakdowns use the same cent-based calculation, with joint amounts split by the selected household view.
 - Monthly plan actuals are month-to-date; targets use full-month equivalents and a projected month-end amount.
 
 Expected paydays and bills remain separate from actual balances. The app includes the 55/5/10/15/15 budget split, transaction routing, reconciliation, debt and investment views, and tax receipt export.
