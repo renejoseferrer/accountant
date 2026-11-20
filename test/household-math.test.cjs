@@ -9,6 +9,9 @@ const demo = JSON.parse(readFileSync(path.join(__dirname, "..", "data", "househo
 test("fixed decimal rates and money survive legacy floating-point values", () => {
   assert.equal(math.fixedDecimal(19.989999771118164), "19.99");
   assert.equal(math.fixedDecimal("19.99"), "19.99");
+  assert.equal(math.isNonNegativeDecimal("19.99", 2), true);
+  assert.equal(math.isNonNegativeDecimal("19.989", 2), false);
+  assert.equal(math.toBasisPoints("19.99"), 1999);
   assert.equal(math.toCents("96.42"), 9642);
 });
 
@@ -85,10 +88,65 @@ test("joint split rounding keeps personal-view categories equal to the transacti
   assert.equal(Object.values(partnerA.expensesByCategoryCents).reduce((sum, value) => sum + value, 0), 1);
 });
 
+test("Partner A and Partner B category spending shares add exactly to Combined Household", () => {
+  const combined = math.calculateLedger(demo, "Combined Household", 50);
+  const partnerA = math.calculateLedger(demo, "Partner A Only", 50);
+  const partnerB = math.calculateLedger(demo, "Partner B Only", 50);
+  const categories = new Set([
+    ...Object.keys(combined.expensesByCategoryCents),
+    ...Object.keys(partnerA.expensesByCategoryCents),
+    ...Object.keys(partnerB.expensesByCategoryCents)
+  ]);
+  for (const category of categories) {
+    assert.equal(
+      (partnerA.expensesByCategoryCents[category] || 0) + (partnerB.expensesByCategoryCents[category] || 0),
+      combined.expensesByCategoryCents[category] || 0,
+      `${category} personal shares must reconcile`
+    );
+  }
+  const essentials = (result) => ["Groceries", "Housing & Utilities", "Transit & Fuel", "Childcare", "Medical"]
+    .reduce((total, category) => total + (result.expensesByCategoryCents[category] || 0), 0);
+  assert.deepEqual([essentials(combined), essentials(partnerA), essentials(partnerB)], [309593, 153584, 156009]);
+  assert.deepEqual([
+    combined.expenseCents - essentials(combined),
+    partnerA.expenseCents - essentials(partnerA),
+    partnerB.expenseCents - essentials(partnerB)
+  ], [3379, 950, 2429]);
+  assert.deepEqual([partnerA.expenseCents, partnerB.expenseCents, combined.expenseCents], [154534, 158438, 312972]);
+  assert.equal(partnerA.expenseCents + partnerB.expenseCents, combined.expenseCents);
+});
+
 test("amount sorting uses signed income and spending values", () => {
   const ascending = math.sortTransactionsBySignedAmount(demo.transactions, "asc");
   const descending = math.sortTransactionsBySignedAmount(demo.transactions, "desc");
   const values = (items) => items.map((item) => math.signedTransactionCents(item));
-  assert.deepEqual(values(ascending), [...values(ascending)].sort((a, b) => a - b));
+  assert.equal(ascending.length, 16);
+  assert.deepEqual(values(ascending), [
+    -225000, -32000, -15000, -11835, -9642, -8900, -7216, -1899, -1480,
+    25000, 38500, 42000, 50000, 60000, 310000, 384000
+  ]);
+  assert.ok(values(ascending).every((value, index, list) => index === 0 || list[index - 1] < value));
   assert.deepEqual(values(descending), [...values(ascending)].reverse());
+});
+
+test("monthly plan targets and month-end projections reconcile to their rows", () => {
+  const plan = math.calculateBudgetPlan(demo.budget, 1452000, {
+    Essentials: 309593,
+    "Fun / Wants": 3379,
+    "Debt Payoff": 80500,
+    "General Savings": 25000,
+    "Investments / Wealth": 50000
+  }, 30, 20);
+  assert.equal(plan.targetTotalCents, 1452000);
+  assert.equal(plan.projectedTotalCents, plan.rows.reduce((total, row) => total + row.projectedCents, 0));
+  assert.deepEqual(plan.rows.map((row) => row.targetCents), [798600, 72600, 145200, 217800, 217800]);
+  assert.deepEqual(plan.rows.map((row) => row.projectedCents), [464390, 5069, 120750, 37500, 75000]);
+  assert.equal(plan.projectedTotalCents, 702709);
+  assert.throws(() => math.calculateBudgetPlan(
+    demo.budget.map((item) => ({ ...item, target: "54.99" })),
+    10000,
+    {},
+    30,
+    20
+  ), /add up to 100%/);
 });

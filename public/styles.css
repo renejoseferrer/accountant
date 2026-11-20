@@ -267,6 +267,8 @@ tr:last-child td { border-bottom:0; }
 .login-help { margin-top:17px;font-size:10px;color:#89958d;text-align:center; }
 .empty-state { padding:35px;text-align:center;color:#829087;font-size:12px; }
 .budget-figures { display:flex; flex-wrap:wrap; gap:4px 12px; }
+.budget-summary { display:flex; flex-wrap:wrap; gap:6px 16px; padding:12px 20px; border-top:1px solid var(--line); color:#5f6c64; font-size:11px; }
+.budget-summary strong { color:var(--ink); }
 .bank-sync-status { margin:-5px 0 17px; }
 .debt-attention { margin-bottom:16px; }
 .needs-attention { background:#fffaf2; }

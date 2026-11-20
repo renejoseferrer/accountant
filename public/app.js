@@ -10,12 +10,17 @@ const navItems = [
 ];
 const definitions = {
   Assets: ["What you own or control that has measurable value. Tracking assets shows the resources available to support your household.", "Total assets = liquid assets + investments + other assets", "Healthy: Review balances regularly"],
+  Essentials: ["Necessary spending for basic food, housing, utilities, required transportation, childcare, and medicine. Tracking it helps estimate the household's minimum monthly needs.", "Essentials = groceries + housing and utilities + required transport + childcare + medical", "Keep needs separate from optional spending"],
+  "Fun / Wants": ["Optional purchases and services beyond essential needs. Tracking wants makes it easier to see whether flexible spending is within the household plan.", "Fun / Wants = total expenses − Essentials", "Compare with your chosen monthly target"],
+  "Debt Payoff": ["Money paid toward debt balances during the month. Card purchases remain expenses; paying the card is recorded separately as debt repayment.", "Debt Payoff = cleared debt repayments", "Compare with your chosen monthly target"],
+  "General Savings": ["Money moved into cash savings for emergencies and near-term goals. These transfers are not household expenses.", "General Savings = cleared transfers to savings", "Compare with your chosen monthly target"],
+  "Investments / Wealth": ["Money contributed to investment accounts for longer-term goals. Contributions are transfers between assets, not spending.", "Investments = cleared contributions to investment accounts", "Compare with your chosen monthly target"],
   "Liquid Assets": ["Cash and near-cash funds you can access quickly without selling a long-term investment.", "Liquid assets = chequing + savings + emergency cash", "Healthy: Keep an accessible emergency fund"],
   "Illiquid Assets": ["Assets that take time or effort to turn into cash, such as a home or certain investments.", "Illiquid assets = total assets − liquid assets", "Plan for access before relying on them"],
   Liabilities: ["Amounts your household owes, including credit cards and loans. A clear liability picture helps you plan repayments.", "Total liabilities = current liabilities + long-term liabilities", "Healthy: Know rates, balances, and due dates"],
-  "Credit Card / Loan": ["A credit card is revolving borrowing; a loan is money repaid in scheduled payments. Tracking the balance, rate, and required minimum helps avoid missed payments and understand borrowing costs.", "Debt balance = starting balance + new borrowing − payments", "Healthy: Record the required minimum and due date"],
+  "Credit Card / Loan": ["A credit card is revolving borrowing; a loan is money repaid in scheduled payments. Tracking the balance, rate, and required minimum helps avoid missed payments and understand borrowing costs.", "Estimated monthly interest = balance × annual rate ÷ 12", "Healthy: Record the required minimum and due date"],
   "Total Liabilities": ["Amounts the household still owes across credit cards, loans, and other borrowing. Tracking the full total makes debt payoff and net-worth changes easier to understand.", "Total liabilities = sum of all outstanding debt balances", "Healthy: Keep every minimum payment and due date recorded"],
-  "Current Liabilities": ["Debts due soon, usually within one year, such as credit-card balances and upcoming payments.", "Current liabilities = balances due within 12 months", "Keep due dates visible"],
+  "Current Liabilities": ["Near-term balances that need attention soon, such as credit-card statements and upcoming payments.", "Current liabilities = recorded credit-card statement balances", "Keep due dates visible"],
   "Long-Term Liabilities": ["Debts scheduled to be repaid over more than a year, such as a car loan or mortgage.", "Long-term liabilities = total liabilities − current liabilities", "Compare rates and amortization"],
   "Net Worth": ["The value left after subtracting everything owed from everything owned. It is a useful snapshot, not a measure of monthly cash.", "Net Worth = Total Assets − Total Liabilities", "Healthy: A sustained upward trend"],
   "Cash Flow": ["Money coming into and going out of your household over a period. Transfers between your own accounts are not income or spending.", "Cash flow = income − expenses", "Compare actuals with your plan"],
@@ -25,9 +30,9 @@ const definitions = {
   "Savings Rate": ["The share of income you keep or direct toward future goals. This estimate uses recorded actual income and expenses.", "Savings rate = (income − expenses) ÷ income × 100%", "A consistent rate matters more than a perfect month"],
   "Debt-to-Income Ratio": ["Compares monthly debt payments with monthly income. Lenders use versions of this ratio to assess borrowing capacity.", "Debt-to-income = monthly debt payments ÷ gross monthly income × 100%", "Lower is generally easier to manage"],
   "Debt-to-Asset Ratio": ["Shows what portion of recorded assets is financed by debt. It puts liabilities in context with what you own.", "Debt-to-asset = total liabilities ÷ total assets × 100%", "Lower means more assets are unencumbered"],
-  Amortization: ["The planned schedule for paying down a loan through regular payments of principal and interest.", "Payment = principal portion + interest portion", "Check whether extra payments reduce interest"],
-  "Principal vs. Interest": ["Principal reduces the amount borrowed; interest is the cost of borrowing. Early loan payments often contain a larger interest share.", "Interest per period ≈ balance × annual rate ÷ periods per year", "Higher-rate debt costs more to carry"],
-  "Cost Basis / ACB": ["Adjusted Cost Base (ACB) is the tracked tax cost of a non-registered investment, adjusted for purchases and certain distributions.", "Unrealized gain/loss = market value − ACB", "ACB tracking can matter for taxable accounts"],
+  Amortization: ["The planned schedule for paying down a loan through regular payments of principal and interest.", "Months remaining = recorded schedule, or balance ÷ monthly payment as a rough estimate", "Check whether extra payments reduce interest"],
+  "Principal vs. Interest": ["Principal reduces the amount borrowed; interest is the cost of borrowing. Early loan payments often contain a larger interest share.", "Monthly payment = principal paid + interest charged", "Higher-rate debt costs more to carry"],
+  "Cost Basis / ACB": ["Adjusted Cost Base (ACB) is the tracked tax cost of an investment, adjusted for purchases and certain distributions.", "ACB = purchase costs + eligible adjustments − amounts returned or disposed", "ACB tracking can matter for taxable accounts"],
   "Asset Allocation": ["How a portfolio is divided among investment types such as equities, bonds, ETFs, and cash.", "Allocation % = category market value ÷ portfolio market value × 100%", "Choose a mix suited to your timeline and risk"],
   Reconciliation: ["Matches an expected paycheck or bill with a real cleared transaction. A match updates the forecast without counting the same event twice.", "Match: within ±3 days and ±15% of expected amount", "Expected amounts are not current cash"],
   "Monthly Debt Paid": ["The amount directed to reducing debt during the month. Card purchases are expenses; paying the card balance is a transfer, not a second expense.", "Debt paid = cleared payments to debt accounts", "Compare with your 10% target"],
@@ -146,7 +151,7 @@ function forecastOccurrences(days = 90) {
 }
 
 function term(name, formulaValue, calcValue, options = {}) {
-  const [definition, formula, benchmark] = definitions[name] || ["A useful financial measure for understanding and planning household finances.", `${name} = tracked household amounts`, "Review alongside your goals"];
+  const [definition, formula, benchmark] = definitions[name];
   const calculation = typeof calcValue === "function" ? calcValue() : calcValue;
   const label = options.label || name;
   const clickable = options.clickable ? " tabindex=\"0\" role=\"button\" aria-expanded=\"false\"" : " tabindex=\"0\"";
@@ -241,7 +246,8 @@ function pageHeading(eyebrow, title, subtitle, actions = "") {
   return `<div class="page-heading"><div><div class="eyebrow">${eyebrow}</div><h1>${title}</h1><p class="subtitle">${subtitle}</p></div><div class="heading-actions">${actions}</div></div>`;
 }
 function statCard(label, value, note, symbol, live, tone = "") {
-  return `<article class="card stat-card"><div class="stat-top"><span>${term(label, "", live)}</span><span class="stat-symbol">${symbol}</span></div><div class="stat-value ${tone}">${value}</div><div class="stat-foot">${note}</div></article>`;
+  const labelMarkup = definitions[label] ? term(label, "", live) : esc(label);
+  return `<article class="card stat-card"><div class="stat-top"><span>${labelMarkup}</span><span class="stat-symbol">${symbol}</span></div><div class="stat-value ${tone}">${value}</div><div class="stat-foot">${note}</div></article>`;
 }
 function sectionCard(title, subtitle, body, extra = "") {
   return `<section class="card section-card"><div class="section-title-row"><div><h2>${title}</h2>${subtitle ? `<p class="muted" style="font-size:11px;margin:5px 0 0">${subtitle}</p>` : ""}</div>${extra}</div>${body}</section>`;
@@ -280,7 +286,7 @@ function recentTransactions(limit = 5, filter = () => true) {
   return rows.map(transactionRow).join("");
 }
 function tableHeader(headers) {
-  return `<thead><tr>${headers.map((header) => `<th>${term(header, "", definitions[header] ? "" : `${esc(header)} values are shown from the active household view.`)}</th>`).join("")}</tr></thead>`;
+  return `<thead><tr>${headers.map((header) => `<th>${definitions[header] ? term(header, "", `${esc(header)} values are shown in the active household view.`) : esc(header)}</th>`).join("")}</tr></thead>`;
 }
 function ledgerTableHeader(headers) {
   const keys = ["date", "merchant", "category", "owner", "account", "amount", null];
@@ -290,7 +296,7 @@ function ledgerTableHeader(headers) {
     const direction = ledgerSort.key === key ? ledgerSort.direction : "";
     const icon = direction === "asc" ? " ↑" : direction === "desc" ? " ↓" : "";
     const label = definitions[header] ? `<span class="term-label">${esc(header)}</span>` : esc(header);
-      const info = definitions[header] ? `<span class="term" tabindex="0" data-term="${esc(header)}"><span class="term-info" aria-label="Learn about ${esc(header)}">i</span><span class="popover" role="tooltip"><span class="popover-title">${esc(header)}</span><p>${esc(definitions[header][0])}</p><div class="formula">${esc(definitions[header][1])}</div><div class="your-calc">Your Calculation: ${esc(header)} from the selected ledger view</div><span class="benchmark">${esc(definitions[header][2])}</span></span></span>` : "";
+      const info = definitions[header] ? `<span class="term" tabindex="0" data-term="${esc(header)}"><span class="term-info" aria-label="Learn about ${esc(header)}">i</span><span class="popover" role="tooltip"><span class="popover-title">${esc(header)}</span><p>${esc(definitions[header][0])}</p><div class="formula">${esc(definitions[header][1])}</div><div class="your-calc">Your Calculation: ${esc(header)} is calculated from the selected view's recorded transactions.</div><span class="benchmark">${esc(definitions[header][2])}</span></span></span>` : "";
     return `<th><button class="sort-header" type="button" data-sort="${key}" aria-label="Sort by ${esc(header)}">${label}${icon}</button>${info}</th>`;
   }).join("")}</tr></thead>`;
 }
@@ -299,7 +305,7 @@ function ratioCard(title, value, note, calculation) {
 }
 function budgetMarkup() {
   const m = metrics();
-  const basis = m.netMonthly || m.income || 6940;
+  const basisCents = toCents(m.netMonthly);
   const now = new Date(`${householdDate()}T12:00:00Z`);
   const year = now.getUTCFullYear();
   const month = now.getUTCMonth();
@@ -308,28 +314,43 @@ function budgetMarkup() {
   const monthLabel = new Intl.DateTimeFormat("en-CA", { timeZone: "UTC", month: "short" }).format(now);
   const actuals = visibleTransactions().filter((transaction) => transaction.status === "Actual" &&
     transaction.date >= `${year}-${String(month + 1).padStart(2, "0")}-01` && transaction.date <= householdDate());
-  const actualTotal = (categories) => fromCents(actuals.filter((transaction) => transaction.type === "expense").reduce((total, transaction) =>
-    total + HouseholdMath.transactionCategoryCents(transaction, categories, view, jointShare), 0));
-  const actualExpenseTotal = fromCents(actuals.filter((transaction) => transaction.type === "expense")
-    .reduce((total, transaction) => total + toCents(transaction.shownAmount), 0));
-  const essentialsActual = actualTotal(["Groceries", "Housing & Utilities", "Transit & Fuel", "Childcare", "Medical"]);
-  const categories = [
-    { name: "Essentials", amount: essentialsActual, target: 55 },
-    { name: "Fun / Wants", amount: subtractMoney(actualExpenseTotal, essentialsActual), target: 5 },
-    { name: "Debt Payoff", amount: sumMoney(actuals.filter((transaction) => transaction.category === "Debt repayment").map((transaction) => transaction.shownAmount)), target: 10 },
-    { name: "General Savings", amount: sumMoney(actuals.filter((transaction) => transaction.category === "General savings").map((transaction) => transaction.shownAmount)), target: 15 },
-    { name: "Investments / Wealth", amount: sumMoney(actuals.filter((transaction) => transaction.category === "Investment contribution").map((transaction) => transaction.shownAmount)), target: 15 }
-  ];
-  return categories.map((item, index) => {
-    item.target = Number(state.budget[index]?.target ?? item.target);
-    const budget = fromCents(roundedDivision(toCents(basis) * toCents(item.target), 10000));
-    const projection = fromCents(roundedDivision(toCents(item.amount) * daysInMonth, elapsedDays));
-    const percentage = budget ? item.amount / budget * 100 : 0;
-    return `<div class="budget-row"><span>${esc(item.name)}</span><div><div class="progress ${percentage > 100 ? "over" : ""}"><span style="width:${Math.min(100, percentage)}%"></span></div><div class="muted budget-figures" style="font-size:9px;margin-top:4px"><span>Month to date, ${monthLabel} 1–${elapsedDays}: ${cad(item.amount)}</span><span>Full month target: ${cad(budget)}</span><span>Projected month end: ${cad(projection)}</span></div></div><span class="progress-target">${Number(item.target)}%</span></div>`;
-  }).join("");
+  const sharedCents = (transaction) => HouseholdMath.shareCents(amountCents(transaction, "amount"), transaction.owner, view, jointShare);
+  const expenseCents = actuals.filter((transaction) => transaction.type === "expense")
+    .reduce((total, transaction) => total + sharedCents(transaction), 0);
+  const essentialsCategories = ["Groceries", "Housing & Utilities", "Transit & Fuel", "Childcare", "Medical"];
+  const essentialsCents = actuals.filter((transaction) => transaction.type === "expense")
+    .reduce((total, transaction) => total +
+      HouseholdMath.transactionCategoryCents(transaction, essentialsCategories, view, jointShare), 0);
+  const actualCentsByCategory = {
+    Essentials: essentialsCents,
+    "Fun / Wants": expenseCents - essentialsCents,
+    "Debt Payoff": actuals.filter((transaction) => transaction.category === "Debt repayment")
+      .reduce((total, transaction) => total + sharedCents(transaction), 0),
+    "General Savings": actuals.filter((transaction) => transaction.category === "General savings")
+      .reduce((total, transaction) => total + sharedCents(transaction), 0),
+    "Investments / Wealth": actuals.filter((transaction) => transaction.category === "Investment contribution")
+      .reduce((total, transaction) => total + sharedCents(transaction), 0)
+  };
+  const plan = HouseholdMath.calculateBudgetPlan(state.budget, basisCents, actualCentsByCategory, daysInMonth, elapsedDays);
+  const totalActualCents = plan.rows.reduce((total, row) => total + row.actualCents, 0);
+  const rows = plan.rows.map((row) => {
+    const actual = fromCents(row.actualCents);
+    const target = fromCents(row.targetCents);
+    const projection = fromCents(row.projectedCents);
+    const percentage = row.targetCents ? row.actualCents / row.targetCents * 100 : 0;
+    const targetPercent = state.budget.find((item) => item.category === row.category).target;
+    const details = row.category === "Essentials"
+      ? `${essentialsCategories.map((category) => `${category} ${cad(fromCents(actuals.filter((transaction) => transaction.type === "expense").reduce((total, transaction) => total + HouseholdMath.transactionCategoryCents(transaction, [category], view, jointShare), 0)))}`).join(" + ")} = ${cad(actual)}`
+      : row.category === "Fun / Wants"
+        ? `${cad(fromCents(expenseCents))} total expenses − ${cad(fromCents(essentialsCents))} Essentials = ${cad(actual)}`
+        : `${cad(actual)} recorded ${row.category.toLowerCase()} activity`;
+    const calculation = `${details}; ${targetPercent}% × ${cad(fromCents(basisCents))} full-month income = ${cad(target)}`;
+    return `<div class="budget-row"><span>${definitions[row.category] ? term(row.category, "", calculation) : esc(row.category)}</span><div><div class="progress ${percentage > 100 ? "over" : ""}"><span style="width:${Math.min(100, percentage)}%"></span></div><div class="muted budget-figures" style="font-size:9px;margin-top:4px"><span>Month to date, ${monthLabel} 1–${elapsedDays}: ${cad(actual)}</span><span>Full month target: ${cad(target)}</span><span>Projected month end: ${cad(projection)}</span></div></div><span class="progress-target">${esc(targetPercent)}%</span></div>`;
+  });
+  return `${rows.join("")}<div class="budget-summary"><strong>Plan total</strong><span>Month to date, ${monthLabel} 1–${elapsedDays}: ${cad(fromCents(totalActualCents))}</span><span>Full month target: ${cad(fromCents(plan.targetTotalCents))}</span><span>Projected month end: ${cad(fromCents(plan.projectedTotalCents))}</span></div>`;
 }
 function budgetSplitLabel() {
-  return state.budget.map((item)=>Number(item.target)).join(" / ");
+  return state.budget.map((item)=>String(Number(item.target))).join(" / ");
 }
 function categorySpend(categories) {
   const byCategory = metrics().ledger.expensesByCategoryCents;
@@ -339,12 +360,15 @@ function overviewScreen() {
   const m = metrics();
   const cashFlowNet = subtractMoney(m.income, m.expenses);
   const todayLabel = new Intl.DateTimeFormat("en-CA", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: HOUSEHOLD_TIME_ZONE }).format(new Date());
+  const liabilities = m.accounts.filter((account) => account.kind === "liability");
+  const currentLiabilities = amount(liabilities.filter((account) => /credit card/i.test(account.accountType || "")));
+  const longTermLiabilities = subtractMoney(m.debt, currentLiabilities);
   return `${pageHeading(todayLabel, `Good evening, ${esc(signedInUser)}.`, "Here’s your household money at a glance.", `<button class="button" data-modal="import">Import statement</button>`)}
     <div class="grid stats-grid">
       ${statCard("Net Worth", cad(m.netWorth), `<span class="trend">↗ 8.0%</span> over the last 6 months`, "↗", `${cad(m.assets)} − ${cad(m.debt)} = ${cad(m.netWorth)}`)}
       ${statCard("Liquid Assets", cad(m.liquid), "Available across chequing & savings", "◉", `${cad(m.liquid)} in cash accounts`)}
       ${statCard("Cash Flow", cad(cashFlowNet), `${cad(m.income)} income · ${cad(m.expenses)} spending`, "↔", `${cad(m.income)} − ${cad(m.expenses)} = ${cad(cashFlowNet)}`)}
-      ${statCard("Total Liabilities", cad(m.debt), "Credit card + car loan", "⌁", `${cad(m.debt)} outstanding`)}
+      ${statCard("Total Liabilities", cad(m.debt), "Credit card + car loan", "⌁", `${cad(currentLiabilities)} current + ${cad(longTermLiabilities)} long-term = ${cad(m.debt)}`)}
     </div>
     <div class="grid content-grid"><section class="card chart-card"><div class="card-header"><div><h2>${term("Net Worth", "", `${cad(m.assets)} − ${cad(m.debt)} = ${cad(m.netWorth)}`, { label: "Net worth over time" })}</h2><p>Household assets less liabilities · last 6 months</p></div><span class="pill green">+8.0% this period</span></div>${chartMarkup()}</section><section class="card breakdown-card"><div class="card-header"><div><h2>Assets by owner</h2><p>One shared view, no double-counting</p></div><button class="button small" data-screen="balance">Details</button></div>${ownerBreakdown()}</section></div>
     <div class="grid content-grid"><section class="card"><div class="card-header"><div><h2>Monthly plan</h2><p>Actuals are month-to-date; targets are full-month equivalents from expected pay cadence (${budgetSplitLabel()}).</p></div><button class="button small" data-screen="cashflow">View plan</button></div>${budgetMarkup()}</section><article class="card insight-card"><div class="insight-label">A thoughtful next step · Personal Accountant</div><h2>Your household has ${m.liquidRatio.toFixed(1)} months of essential spending in liquid funds.</h2><p>${m.liquidRatio < 3 ? "Building toward a three-month reserve can make unexpected costs easier to manage." : m.liquidRatio <= 6 ? "You’re within the typical 3–6 month emergency runway range. Keep this reserve accessible." : "Your accessible reserve is above the typical 3–6 month range. Consider whether part of it is intended for another near-term goal."}</p><button class="button small" data-screen="balance">Explore your ratios →</button></article></div>
@@ -362,16 +386,23 @@ function balanceScreen() {
     const debt = amount(owned.filter((a) => a.kind === "liability"));
     return `<tr><td data-label="Owner"><strong>${owner}</strong></td><td data-label="Liquid assets" class="amount">${cad(amount(owned.filter((a) => a.kind === "cash")))}</td><td data-label="Investments" class="amount">${cad(amount(owned.filter((a) => a.kind === "investment")))}</td><td data-label="Total assets" class="amount">${cad(assets)}</td><td data-label="Liabilities" class="amount">${cad(debt)}</td><td data-label="Net worth" class="amount">${cad(subtractMoney(assets, debt))}</td></tr>`;
   }).join("");
+  const assetParts = `${cad(amount(accounts.filter((a) => a.kind === "cash")))} liquid + ${cad(amount(accounts.filter((a) => a.kind === "investment")))} investments + ${cad(amount(accounts.filter((a) => a.kind !== "cash" && a.kind !== "investment" && a.kind !== "liability")))} other assets = ${cad(m.assets)}`;
+  const liabilityParts = accounts.filter((account) => account.kind === "liability")
+    .map((account) => `${esc(account.name)} ${cad(account.shownBalance)}`).join(" + ") || "No recorded debt";
   return `${pageHeading("The full picture", "Balance sheet", "What you own, what you owe, and how your household is progressing.", `<button class="button" data-action="manage-accounts">Manage accounts</button>`)}
-    <div class="grid stats-grid">${statCard("Assets", cad(m.assets), "Cash + investment accounts", "◫", `${cad(m.assets)} total assets`)}${statCard("Liquid Assets", cad(m.liquid), "Accessible cash balances", "◉", `${cad(m.liquid)} liquid`)}${statCard("Illiquid Assets", cad(Math.max(0, subtractMoney(m.assets, m.liquid))), "Investments & long-term holdings", "▤", `${cad(m.assets)} − ${cad(m.liquid)} = ${cad(Math.max(0, subtractMoney(m.assets, m.liquid)))}`)}${statCard("Net Worth", cad(m.netWorth), "Assets less all liabilities", "↗", `${cad(m.assets)} − ${cad(m.debt)} = ${cad(m.netWorth)}`)}</div>
+    <div class="grid stats-grid">${statCard("Assets", cad(m.assets), "Cash + investment accounts", "◫", assetParts)}${statCard("Liquid Assets", cad(m.liquid), "Accessible cash balances", "◉", `${cad(amount(accounts.filter((a) => a.kind === "cash")))} across recorded cash accounts = ${cad(m.liquid)}`)}${statCard("Illiquid Assets", cad(Math.max(0, subtractMoney(m.assets, m.liquid))), "Investments & long-term holdings", "▤", `${cad(m.assets)} − ${cad(m.liquid)} = ${cad(Math.max(0, subtractMoney(m.assets, m.liquid)))}`)}${statCard("Net Worth", cad(m.netWorth), "Assets less all liabilities", "↗", `${cad(m.assets)} − ${cad(m.debt)} = ${cad(m.netWorth)}`)}</div>
     ${sectionCard("Owner breakdown", "Personal accounts and the shared household bucket. Joint balances are included once in Combined Household.", `<div class="table-wrap owner-table-wrap"><table class="owner-balance-table mobile-table"><thead><tr>${["Owner","Liquid assets","Investments","Total assets","Liabilities","Net worth"].map((label)=>`<th>${esc(label)}</th>`).join("")}</tr></thead><tbody>${rows}<tr class="household-total"><td data-label="Owner"><strong>Household total</strong></td><td data-label="Liquid assets" class="amount">${cad(amount(accounts.filter((a)=>a.kind==="cash")))}</td><td data-label="Investments" class="amount">${cad(amount(accounts.filter((a)=>a.kind==="investment")))}</td><td data-label="Total assets" class="amount">${cad(m.assets)}</td><td data-label="Liabilities" class="amount">${cad(m.debt)}</td><td data-label="Net worth" class="amount">${cad(m.netWorth)}</td></tr></tbody></table></div>`, `<label class="muted" style="font-size:10px">Joint share in personal view <strong>${jointShare}%</strong></label><input id="jointShare" type="range" min="0" max="100" value="${jointShare}" style="width:95px;accent-color:#32865a">`)}
     <div class="grid content-grid"><section class="card chart-card"><div class="card-header"><div><h2>Net worth history</h2><p>Monthly snapshot</p></div><span class="pill green">Six-month view</span></div>${chartMarkup()}</section><section class="card"><div class="card-header"><div><h2>Accountant ratios</h2><p>Indicators based on tracked data</p></div></div><div class="ratio-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">${ratioCard("Savings Rate", pct(m.savingsRate, 1), "Actual income less expenses", `${cad(subtractMoney(m.income,m.expenses))} ÷ ${cad(m.income)} = ${pct(m.savingsRate,1)}`)}${ratioCard("Debt-to-Income Ratio", pct(m.dti, 1), "Scheduled debt payments ÷ gross", `${cad(m.monthlyDebtPayments)} ÷ ${cad(m.grossMonthly)} = ${pct(m.dti,1)}`)}${ratioCard("Liquidity Ratio / Emergency Runway", `${m.liquidRatio.toFixed(1)} mo`, "Target: 3–6 months", `${cad(m.liquid)} ÷ ${cad(m.essentials)} essential expenses = ${m.liquidRatio.toFixed(1)} months`)}${ratioCard("Debt-to-Asset Ratio", pct(m.debtAsset, 1), "Liabilities ÷ assets", `${cad(m.debt)} ÷ ${cad(m.assets)} = ${pct(m.debtAsset,1)}`)}</div></section></div>
-    ${sectionCard("Liability maturity", "Separate near-term statement balances from longer-term loans.", `<div class="metric-list"><div class="metric-row"><span>${term("Current Liabilities", "", `${cad(currentLiabilities)} due on current credit-card statements`)}</span><strong>${cad(currentLiabilities)}</strong></div><div class="metric-row"><span>${term("Long-Term Liabilities", "", `${cad(longTermLiabilities)} remaining on loans`)}</span><strong>${cad(longTermLiabilities)}</strong></div></div>`)}
+    ${sectionCard("Liability maturity", "Separate near-term statement balances from longer-term loans.", `<div class="metric-list"><div class="metric-row"><span>${term("Current Liabilities", "", `${cad(currentLiabilities)} in current credit-card balances`)}</span><strong>${cad(currentLiabilities)}</strong></div><div class="metric-row"><span>${term("Long-Term Liabilities", "", `${cad(m.debt)} total liabilities − ${cad(currentLiabilities)} current liabilities = ${cad(longTermLiabilities)}`)}</span><strong>${cad(longTermLiabilities)}</strong></div></div>`)}
     ${sectionCard("All accounts", "Add or edit cash, investments, credit, and private personal-loan balances.", `<div id="accountManager" class="account-tools"><button class="button primary" data-action="account-add">+ Add account or loan</button><button class="button" data-modal="connect-choice">Connect an account</button><button class="button" data-action="clear-demo">Clear demo data</button></div>${accountTable(accounts)}`)}`;
 }
 function accountTable(accounts) {
   const labels = ["Account", "Institution", "Owner", "Type", "Balance", "Details", "Actions"];
-  return `<div class="table-wrap"><table class="account-table mobile-table">${tableHeader(labels)}<tbody>${accounts.map((a) => `<tr><td data-label="Account"><div class="merchant-cell"><span class="merchant-icon">${a.kind === "liability" ? "↘" : a.kind === "investment" ? "◉" : "▣"}</span><strong>${esc(a.name)}</strong></div></td><td data-label="Institution">${esc(a.institution)}</td><td data-label="Owner">${esc(a.owner)}</td><td data-label="Type"><span class="pill">${a.kind === "liability" ? term("Credit Card / Loan", "", `${a.accountType || "Debt"} · ${cad(a.shownBalance)} outstanding · ${String(a.apr || "0.00")}% APR`, { label: a.accountType || "Debt" }) : esc(a.accountType || a.bucket || "Cash")}</span></td><td data-label="Balance" class="amount">${cad(a.shownBalance)}</td><td data-label="Details">${a.kind === "liability" ? `${String(a.apr || "0.00")}% APR · due ${a.dueDate ? dateLabel(a.dueDate) : "not set"}` : a.kind === "investment" ? `ACB ${cad(sharedAmount(a.acb || 0, a.owner))}` : `•••• ${esc(a.last4 || "—")}`}</td><td data-label="Actions"><button class="table-action" data-edit-account="${esc(a.id)}">Edit</button></td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table class="account-table mobile-table">${tableHeader(labels)}<tbody>${accounts.map((a) => {
+    const monthlyInterest = fromCents(roundedDivision(toCents(a.shownBalance) * HouseholdMath.toBasisPoints(a.apr || "0.00"), 120000));
+    const minimum = a.minimumPayment ?? a.monthlyPayment;
+    return `<tr><td data-label="Account"><div class="merchant-cell"><span class="merchant-icon">${a.kind === "liability" ? "↘" : a.kind === "investment" ? "◉" : "▣"}</span><strong>${esc(a.name)}</strong></div></td><td data-label="Institution">${esc(a.institution)}</td><td data-label="Owner">${esc(a.owner)}</td><td data-label="Type"><span class="pill">${a.kind === "liability" ? term("Credit Card / Loan", "", `${cad(a.shownBalance)} × ${String(a.apr || "0.00")}% ÷ 12 ≈ ${cad(monthlyInterest)} estimated monthly interest; ${minimum == null ? "minimum not entered" : `${cad(sharedAmount(minimum, a.owner))} minimum payment`}`, { label: a.accountType || "Debt" }) : esc(a.accountType || a.bucket || "Cash")}</span></td><td data-label="Balance" class="amount">${cad(a.shownBalance)}</td><td data-label="Details">${a.kind === "liability" ? `${String(a.apr || "0.00")}% APR · due ${a.dueDate ? dateLabel(a.dueDate) : "not set"}` : a.kind === "investment" ? `ACB ${cad(sharedAmount(a.acb || 0, a.owner))}` : `•••• ${esc(a.last4 || "—")}`}</td><td data-label="Actions"><button class="table-action" data-edit-account="${esc(a.id)}">Edit</button></td></tr>`;
+  }).join("")}</tbody></table></div>`;
 }
 function scheduleList(limit = 20, days = null) {
   const rows = forecastOccurrences(days ?? 90).slice(0, limit);
@@ -380,6 +411,10 @@ function scheduleList(limit = 20, days = null) {
 function cashflowScreen() {
   const m = metrics();
   const forecast = forecastOccurrences(forecastDays);
+  const reconciliationExample = forecast.find((item) => item.status !== "Actual / Cleared");
+  const reconciliationCalculation = reconciliationExample
+    ? `${esc(reconciliationExample.name)} expects ${cad(sharedAmount(reconciliationExample.amount, reconciliationExample.owner))} on ${dateLabel(reconciliationExample.date)}; a match must be within ±3 days and ±15% of that amount.`
+    : "No expected paycheck or bill is available to match in this view.";
   const bills = sumMoney(forecast.filter((s) => s.type === "bill").map((s) => sharedAmount(s.amount, s.owner)));
   const expectedIncome = sumMoney(forecast.filter((s)=>s.type==="income").map((s)=>sharedAmount(s.amount, s.owner)));
   const cashFlowNet = subtractMoney(m.income, m.expenses);
@@ -387,7 +422,7 @@ function cashflowScreen() {
   const variableExpenses = subtractMoney(m.expenses, fixedExpenses);
   return `${pageHeading("Plan ahead with confidence", "Cash flow & forecast", "Expected paydays and bills are planning signals—not current assets.", `<button class="button primary" data-modal="schedule">+ Add recurring item</button>`)}
     <div class="grid stats-grid">${statCard("Safe-to-Spend", cad(m.safe), `${cad(m.liquidChecking)} chequing − ${cad(m.dueBeforePay)} near-term bills`, "◈", `${cad(m.liquidChecking)} − ${cad(m.dueBeforePay)} = ${cad(m.safe)}`)}${statCard(`Expected income · ${forecastDays} days`, cad(expectedIncome), "Not counted in current net worth", "↗", "Expected deposits are not yet cash")} ${statCard(`Bills due · ${forecastDays} days`, cad(bills), "Upcoming bills & statements", "↘", `${cad(bills)} expected payments`)}${statCard("Actual cash flow", cad(cashFlowNet), `${cad(m.income)} income − ${cad(m.expenses)} expenses`, "↔", `${cad(m.income)} − ${cad(m.expenses)} = ${cad(cashFlowNet)}`)}</div>
-    <div class="grid content-grid"><section class="card section-card"><div class="card-header"><div><h2>Expected vs. actual timeline</h2><p>Actuals reconcile within ±3 days and ±15% of an expected amount</p></div><div class="heading-actions">${[30,60,90].map((days)=>`<button class="button small ${forecastDays===days?"primary":""}" data-forecast-days="${days}">${days} days</button>`).join("")}</div></div>${scheduleList(forecast.length, forecastDays)}</section><section class="card"><div class="card-header"><div><h2>Safe-to-spend</h2><p>Before your next payday</p></div></div><div class="asset-total">${cad(m.safe)}<small>Current chequing balance less bills due before payday</small></div><div class="metric-list"><div class="metric-row"><span>Liquid chequing balances</span><strong>${cad(m.liquidChecking)}</strong></div><div class="metric-row"><span>Upcoming scheduled bills</span><strong>− ${cad(m.dueBeforePay)}</strong></div><div class="metric-row"><span>${term("Safe-to-Spend", "", `${cad(m.liquidChecking)} − ${cad(m.dueBeforePay)} = ${cad(m.safe)}`)}</span><strong>${cad(m.safe)}</strong></div></div><div style="padding:0 20px 18px"><div class="notice">${term("Reconciliation", "", "Expected item matched against cleared amount")} Paydays and bills remain Expected until a matching bank transaction clears.</div></div></section></div>
+    <div class="grid content-grid"><section class="card section-card"><div class="card-header"><div><h2>Expected vs. actual timeline</h2><p>Actuals reconcile within ±3 days and ±15% of an expected amount</p></div><div class="heading-actions">${[30,60,90].map((days)=>`<button class="button small ${forecastDays===days?"primary":""}" data-forecast-days="${days}">${days} days</button>`).join("")}</div></div>${scheduleList(forecast.length, forecastDays)}</section><section class="card"><div class="card-header"><div><h2>Safe-to-spend</h2><p>Before your next payday</p></div></div><div class="asset-total">${cad(m.safe)}<small>Current chequing balance less bills due before payday</small></div><div class="metric-list"><div class="metric-row"><span>Liquid chequing balances</span><strong>${cad(m.liquidChecking)}</strong></div><div class="metric-row"><span>Upcoming scheduled bills</span><strong>− ${cad(m.dueBeforePay)}</strong></div><div class="metric-row"><span>${term("Safe-to-Spend", "", `${cad(m.liquidChecking)} − ${cad(m.dueBeforePay)} = ${cad(m.safe)}`)}</span><strong>${cad(m.safe)}</strong></div></div><div style="padding:0 20px 18px"><div class="notice">${term("Reconciliation", "", reconciliationCalculation)} Paydays and bills remain Expected until a matching bank transaction clears.</div></div></section></div>
     <div class="grid content-grid"><section class="card"><div class="card-header"><div><h2>Monthly budget targets</h2><p>${budgetSplitLabel()} split · based on estimated household take-home pay</p></div><button class="button small" data-action="budget">Customize targets</button></div>${budgetMarkup()}</section><section class="card"><div class="card-header"><div><h2>Fixed vs. variable</h2><p>All actual spending is included in one of these two groups.</p></div></div><div class="metric-list"><div class="metric-row"><span>${term("Gross vs. Net Income", "", `${cad(m.grossMonthly)} gross − ${cad(subtractMoney(m.grossMonthly,m.netMonthly))} estimated deductions = ${cad(m.netMonthly)} planned net deposits`)}</span><strong>${cad(m.income)} cleared net</strong></div><div class="metric-row"><span>${term("Fixed vs. Variable Expenses", "", `${cad(fixedExpenses)} fixed-style + ${cad(variableExpenses)} variable-style = ${cad(m.expenses)}`)}</span><strong>${cad(m.expenses)}</strong></div><div class="metric-row"><span>Fixed-style categories</span><strong>${cad(fixedExpenses)}</strong></div><div class="metric-row"><span>Variable-style categories</span><strong>${cad(variableExpenses)}</strong></div><div class="metric-row"><span>${term("Savings Rate", "", `${cad(subtractMoney(m.income,m.expenses))} ÷ ${cad(m.income)} = ${pct(m.savingsRate,1)}`)}</span><strong>${pct(m.savingsRate,1)}</strong></div></div></section></div>`;
 }
 function ledgerScreen() {
@@ -410,7 +445,7 @@ function ledgerScreen() {
 function debtScreen() {
   const m = metrics();
   const allDebts = visibleAccounts((a) => a.kind === "liability");
-  const debts = allDebts.slice().sort((a,b) => debtSort === "highest-rate" ? (Number(b.apr)||0) - (Number(a.apr)||0) : debtSort === "largest" ? toCents(b.shownBalance)-toCents(a.shownBalance) : toCents(a.shownBalance)-toCents(b.shownBalance));
+  const debts = allDebts.slice().sort((a,b) => debtSort === "highest-rate" ? HouseholdMath.toBasisPoints(b.apr || "0.00") - HouseholdMath.toBasisPoints(a.apr || "0.00") : debtSort === "largest" ? toCents(b.shownBalance)-toCents(a.shownBalance) : toCents(a.shownBalance)-toCents(b.shownBalance));
   const payoffDebts = debts.filter((a) => !/mortgage/i.test(a.accountType || ""));
   const targetDebt = payoffDebts.find((a) => a.balance > 0);
   const rolledMinimums = sumMoney(payoffDebts.filter((debt) => debt.balance <= 0).map((debt) => sharedAmount(debt.minimumPayment ?? debt.monthlyPayment ?? 0, debt.owner)));
@@ -426,10 +461,15 @@ function debtScreen() {
     <div class="grid two-col">${debts.map((debt) => {
       const payment = sharedAmount(debt.monthlyPayment ?? debt.minimumPayment ?? 0, debt.owner);
       const months = debt.amortizationMonths || (payment ? Math.max(1, Math.ceil(debt.shownBalance / payment)) : 0);
-      const interest = fromCents(roundedDivision(toCents(debt.shownBalance) * toCents(debt.apr || 0), 120000));
+      const interest = fromCents(roundedDivision(toCents(debt.shownBalance) * HouseholdMath.toBasisPoints(debt.apr || "0.00"), 120000));
       const principal = Math.max(0, subtractMoney(payment, interest));
       const shownLimit = sharedAmount(debt.limit || 0, debt.owner);
-      return `<article class="card" style="padding:19px;margin-bottom:16px"><div class="account-head"><div><div class="account-name">${esc(debt.name)}</div><div class="account-sub">${esc(debt.institution||"Personal loan")} · ${esc(debt.owner)}</div></div><span class="pill ${Number(debt.apr) >= 12 ? "red" : "amber"}">${String(debt.apr||"0.00")}% APR</span></div><div class="account-value">${cad(debt.shownBalance)}</div><div class="account-sub">${debt.accountType === "Credit card" ? `${cad(shownLimit)} credit limit · ${shownLimit?((debt.shownBalance / shownLimit) * 100).toFixed(0):0}% utilization` : debt.shownBalance<=0?"Paid in full":months?`Estimated payoff in ${months} months`:"Enter a payment to estimate payoff"}</div><div class="metric-list" style="padding:8px 0 0"><div class="metric-row"><span>Next due date</span><strong>${debt.dueDate?dateLabel(debt.dueDate):"Not set"}</strong></div><div class="metric-row"><span>Minimum payment</span><strong>${debt.minimumPayment || debt.monthlyPayment ? cad(payment) : "Not set"}</strong></div><div class="metric-row"><span>${term("Principal vs. Interest", "", payment ? `${cad(payment)} ≈ ${cad(principal)} principal + ${cad(interest)} interest` : "Enter a payment to estimate the principal and interest split")}</span><strong>${payment ? `${cad(principal)} / ${cad(interest)}` : "Set payment"}</strong></div><div class="metric-row"><span>${term("Amortization", "", months ? `Approx. ${months} months at current payment` : "Enter a payment to estimate payoff time")}</span><strong>${months ? `${months} months` : "Not available"}</strong></div><div class="metric-row"><span></span><strong><button class="table-action" data-edit-account="${esc(debt.id)}">Edit debt details</button></strong></div></div></article>`;
+      const amortizationCalculation = debt.amortizationMonths
+        ? `Recorded schedule: ${months} months for a ${cad(debt.shownBalance)} balance.`
+        : payment
+          ? `${cad(debt.shownBalance)} balance ÷ ${cad(payment)} monthly payment ≈ ${months} months before future interest.`
+          : "Enter a payment to estimate payoff time.";
+      return `<article class="card" style="padding:19px;margin-bottom:16px"><div class="account-head"><div><div class="account-name">${esc(debt.name)}</div><div class="account-sub">${esc(debt.institution||"Personal loan")} · ${esc(debt.owner)}</div></div><span class="pill ${HouseholdMath.toBasisPoints(debt.apr || "0.00") >= 1200 ? "red" : "amber"}">${String(debt.apr||"0.00")}% APR</span></div><div class="account-value">${cad(debt.shownBalance)}</div><div class="account-sub">${debt.accountType === "Credit card" ? `${cad(shownLimit)} credit limit · ${shownLimit?((debt.shownBalance / shownLimit) * 100).toFixed(0):0}% utilization` : debt.shownBalance<=0?"Paid in full":months?`Estimated payoff in ${months} months`:"Enter a payment to estimate payoff"}</div><div class="metric-list" style="padding:8px 0 0"><div class="metric-row"><span>Next due date</span><strong>${debt.dueDate?dateLabel(debt.dueDate):"Not set"}</strong></div><div class="metric-row"><span>Minimum payment</span><strong>${debt.minimumPayment || debt.monthlyPayment ? cad(payment) : "Not set"}</strong></div><div class="metric-row"><span>${term("Principal vs. Interest", "", payment ? `${cad(payment)} monthly payment = ${cad(principal)} principal + ${cad(interest)} estimated interest` : "Enter a payment to estimate the principal and interest split")}</span><strong>${payment ? `${cad(principal)} / ${cad(interest)}` : "Set payment"}</strong></div><div class="metric-row"><span>${term("Amortization", "", amortizationCalculation)}</span><strong>${months ? `${months} months` : "Not available"}</strong></div><div class="metric-row"><span></span><strong><button class="table-action" data-edit-account="${esc(debt.id)}">Edit debt details</button></strong></div></div></article>`;
     }).join("")}</div>
     ${sectionCard("How the snowball rolls", "Pay minimums on every debt, then aim your extra amount at the current target. Once it is paid off, its minimum joins your extra amount for the next smallest debt.", `<div class="notice">The snowball favors momentum, not lowest interest cost. Keep all required minimums current; compare the highest-rate view if reducing interest is your priority. Mortgage stays outside Baby Step 2.</div>`)}`;
 }
@@ -459,11 +499,19 @@ function investmentsScreen() {
   const accounts = visibleAccounts((a) => a.kind === "investment");
   const m = metrics();
   const gains = sumMoney(accounts.map((a) => subtractMoney(a.shownBalance, sharedAmount(a.acb || 0, a.owner))));
+  const allocationNames = ["Equities", "ETFs", "Bonds", "Cash"];
+  const allocationCents = Object.fromEntries(allocationNames.map((name) => [name, accounts.reduce((total, account) => {
+    const allocation = account.allocation || { Equities: "50.00", ETFs: "25.00", Bonds: "20.00", Cash: "5.00" };
+    return total + roundedDivision(toCents(account.shownBalance) * HouseholdMath.toBasisPoints(allocation[name] || "0.00"), 10000);
+  }, 0)]));
+  const allocationCalculation = allocationNames.map((name) =>
+    `${name} ${cad(fromCents(allocationCents[name]))} ÷ ${cad(m.investments)} = ${pct(m.investments ? allocationCents[name] / toCents(m.investments) * 100 : 0, 1)}`
+  ).join("; ");
   const deductions = state.taxDeductions.filter((item) => relevantOwner(item.owner) > 0)
     .map((item) => ({ ...item, shownAmount: sharedAmount(item.amount, item.owner) }));
   return `${pageHeading("Invest with the whole picture", "Investments & tax vault", "Canadian account types, portfolio mix, adjusted cost base, and deductible receipts.", `<button class="button" data-action="tax-export">↓ Export tax CSV</button><button class="button primary" data-action="balance-update">Quarterly balance update</button>`)}
-    <div class="grid stats-grid">${statCard("Investment assets", cad(m.investments), `${accounts.length} accounts in this view`, "◉", `${cad(m.investments)} market value`)}${statCard("Unrealized gain / loss", `${gains >= 0 ? "+" : "−"}${cad(Math.abs(gains))}`, "Market value less tracked ACB", "↗", `${cad(m.investments)} − ${cad(m.basis)} = ${cad(gains)}`)}${statCard("Cost Basis / ACB", cad(m.basis), "Tracked adjusted cost base", "▤", `${cad(m.investments)} − ${cad(m.basis)} = ${cad(gains)}`)}${statCard("Tax receipts", `${deductions.length} receipts`, `${cad(sumMoney(deductions.map((d)=>d.shownAmount)))} tagged`, "⌑", `${deductions.length} tagged receipts`)}</div>
-    <section class="card section-card"><div class="section-title-row"><div><h2>Canadian portfolio overview</h2><p class="muted" style="font-size:11px;margin:5px 0 0">${term("Asset Allocation", "", "Equities, ETFs, bonds, and cash as tracked per account")}</p></div><span class="pill green">TFSA · RRSP · FHSA · Non-Registered</span></div><div class="account-grid">${accounts.map((a) => {
+    <div class="grid stats-grid">${statCard("Investment assets", cad(m.investments), `${accounts.length} accounts in this view`, "◉", `${cad(m.investments)} total recorded investment balances`)}${statCard("Unrealized gain / loss", `${gains >= 0 ? "+" : "−"}${cad(Math.abs(gains))}`, "Market value less tracked ACB", "↗", `${cad(m.investments)} market value − ${cad(m.basis)} tracked ACB = ${cad(gains)}`)}${statCard("Cost Basis / ACB", cad(m.basis), "Tracked adjusted cost base", "▤", `Total tracked ACB across ${accounts.length} investment accounts = ${cad(m.basis)}`)}${statCard("Tax receipts", `${deductions.length} receipts`, `${cad(sumMoney(deductions.map((d)=>d.shownAmount)))} tagged`, "⌑", `${deductions.length} tagged receipts`)}</div>
+    <section class="card section-card"><div class="section-title-row"><div><h2>Canadian portfolio overview</h2><p class="muted" style="font-size:11px;margin:5px 0 0">${term("Asset Allocation", "", allocationCalculation)}</p></div><span class="pill green">TFSA · RRSP · FHSA · Non-Registered</span></div><div class="account-grid">${accounts.map((a) => {
       const gain = subtractMoney(a.shownBalance, sharedAmount(a.acb || 0, a.owner));
       const allocation = a.allocation || { Equities: 50, ETFs: 25, Bonds: 20, Cash: 5 };
       return `<article class="account-card"><div class="account-head"><div><div class="account-name">${esc(a.name)}</div><div class="account-sub">${esc(a.accountType)} · ${esc(a.owner)}</div></div>${a.manual ? `<span class="pill amber">Manual · quarterly</span>` : `<span class="pill green">Synced</span>`}</div><div class="account-value">${cad(a.shownBalance)}</div><div class="account-change">${gain >= 0 ? "+" : "−"}${cad(Math.abs(gain))} unrealized · ACB ${cad(sharedAmount(a.acb || 0,a.owner))}</div><div class="allocation">${Object.values(allocation).map((value) => `<span style="width:${value}%"></span>`).join("")}</div><div class="account-sub" style="margin-top:8px">Equities ${Number(allocation.Equities)}% · ETFs ${Number(allocation.ETFs)}% · Bonds ${Number(allocation.Bonds)}% · Cash ${Number(allocation.Cash)}%</div></article>`;
@@ -474,13 +522,6 @@ function pageMarkup() {
   const content = { overview: overviewScreen, balance: balanceScreen, cashflow: cashflowScreen, ledger: ledgerScreen, debt: debtScreen, plan: babyStepsScreen, investments: investmentsScreen }[screen]();
   const page = app.querySelector("#pageContent");
   page.innerHTML = content;
-  const m = metrics();
-  const liveSummary = `${view}: ${cad(m.assets)} total assets − ${cad(m.debt)} liabilities = ${cad(m.netWorth)} net worth.`;
-  page.querySelectorAll(".card h2, .metric-row > span:first-child, .budget-row > span:first-child, .account-card .account-name").forEach((label) => {
-    if (label.dataset.noTerm === "true" || label.querySelector(".term")) return;
-    const text = label.textContent.trim();
-    if (text) label.innerHTML = term(text, "", liveSummary);
-  });
   bindPageEvents();
 }
 
@@ -496,7 +537,7 @@ function modalMarkup() {
     const account=state.accounts.find(item=>item.id===modal.id);
     const kinds=["Chequing","Savings","Emergency fund","TFSA","RRSP","FHSA","Non-Registered","Credit card","Line of credit","Car loan","Student loan","Mortgage","Personal loan"];
     const type=account?.accountType||account?.bucket||"Chequing";
-    return `<div class="modal-backdrop" data-action="backdrop"><section class="modal"><div class="modal-head"><div><div class="eyebrow">Household money</div><h2>${account?"Edit account or loan":"Add account or private loan"}</h2><p class="subtitle" style="margin-top:6px">Enter balances manually. Private loans can be named for the person you owe.</p></div><button class="modal-close" data-action="modal-close">×</button></div><form id="accountForm"><input type="hidden" name="id" value="${esc(account?.id||"")}"><div class="form-row"><label>Account or debt name</label><input class="input" name="name" required maxlength="80" placeholder="e.g. Loan from Alex" value="${esc(account?.name||"")}"></div><div class="grid two-col"><div class="form-row"><label>Type</label><select class="select" name="accountType">${kinds.map(item=>`<option ${item===type?"selected":""}>${item}</option>`).join("")}</select></div><div class="form-row"><label>Owner</label><select class="select" name="owner">${["Joint","Partner A","Partner B"].map(owner=>`<option ${owner===(account?.owner||"Joint")?"selected":""}>${owner}</option>`).join("")}</select></div></div><div class="form-row"><label>Bank or person owed (optional)</label><input class="input" name="institution" maxlength="80" placeholder="e.g. Alex" value="${esc(account?.institution||"")}"></div><div class="grid two-col"><div class="form-row"><label>Current balance (CAD)</label><input class="input" name="balance" type="number" min="0" step="0.01" required value="${Number(account?.balance||0)}"></div><div class="form-row"><label>Starting balance (for payoff progress)</label><input class="input" name="startingBalance" type="number" min="0" step="0.01" value="${Number(account?.startingBalance ?? account?.balance ?? 0)}"></div></div><div class="grid two-col"><div class="form-row"><label>Interest rate (APR %)</label><input class="input" name="apr" type="number" min="0" step="0.01" value="${esc(String(account?.apr ?? "0.00"))}"></div><div class="form-row"><label>Minimum monthly payment <span id="minimumRequiredHint"></span></label><input class="input" id="minimumPaymentInput" name="minimumPayment" type="number" min="0" step="0.01" value="${account?.minimumPayment ?? account?.monthlyPayment ?? ""}"></div></div><div class="grid two-col"><div class="form-row"><label>Credit limit (if applicable)</label><input class="input" name="limit" type="number" min="0" step="0.01" value="${Number(account?.limit||0)}"></div><div class="form-row"><label>Next due date (optional)</label><input class="input" name="dueDate" type="date" value="${esc(account?.dueDate||"")}"></div></div><div class="form-row"><label>Adjusted cost base (investment)</label><input class="input" name="acb" type="number" min="0" step="0.01" value="${Number(account?.acb||0)}"></div><div class="notice">For debts, the starting balance helps show progress as you update today’s balance. Mortgage is listed but kept outside the non-mortgage snowball target.</div><div class="modal-actions"><button type="button" class="button" data-action="modal-close">Cancel</button><button class="button primary">Save account</button></div></form></section></div>`;
+    return `<div class="modal-backdrop" data-action="backdrop"><section class="modal"><div class="modal-head"><div><div class="eyebrow">Household money</div><h2>${account?"Edit account or loan":"Add account or private loan"}</h2><p class="subtitle" style="margin-top:6px">Enter balances manually. Private loans can be named for the person you owe.</p></div><button class="modal-close" data-action="modal-close">×</button></div><form id="accountForm"><input type="hidden" name="id" value="${esc(account?.id||"")}"><div class="form-row"><label>Account or debt name</label><input class="input" name="name" required maxlength="80" placeholder="e.g. Loan from Alex" value="${esc(account?.name||"")}"></div><div class="grid two-col"><div class="form-row"><label>Type</label><select class="select" name="accountType">${kinds.map(item=>`<option ${item===type?"selected":""}>${item}</option>`).join("")}</select></div><div class="form-row"><label>Owner</label><select class="select" name="owner">${["Joint","Partner A","Partner B"].map(owner=>`<option ${owner===(account?.owner||"Joint")?"selected":""}>${owner}</option>`).join("")}</select></div></div><div class="form-row"><label>Bank or person owed (optional)</label><input class="input" name="institution" maxlength="80" placeholder="e.g. Alex" value="${esc(account?.institution||"")}"></div><div class="grid two-col"><div class="form-row"><label>Current balance (CAD)</label><input class="input" name="balance" type="number" min="0" step="0.01" required value="${Number(account?.balance||0)}"></div><div class="form-row"><label>Starting balance (for payoff progress)</label><input class="input" name="startingBalance" type="number" min="0" step="0.01" value="${Number(account?.startingBalance ?? account?.balance ?? 0)}"></div></div><div class="grid two-col">    <div class="form-row"><label>Interest rate (APR %)</label><input class="input" name="apr" type="text" inputmode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" value="${esc(String(account?.apr ?? "0.00"))}"></div><div class="form-row"><label>Minimum monthly payment <span id="minimumRequiredHint"></span></label><input class="input" id="minimumPaymentInput" name="minimumPayment" type="number" min="0" step="0.01" value="${account?.minimumPayment ?? account?.monthlyPayment ?? ""}"></div></div><div class="grid two-col"><div class="form-row"><label>Credit limit (if applicable)</label><input class="input" name="limit" type="number" min="0" step="0.01" value="${Number(account?.limit||0)}"></div><div class="form-row"><label>Next due date (optional)</label><input class="input" name="dueDate" type="date" value="${esc(account?.dueDate||"")}"></div></div><div class="form-row"><label>Adjusted cost base (investment)</label><input class="input" name="acb" type="number" min="0" step="0.01" value="${Number(account?.acb||0)}"></div><div class="notice">For debts, the starting balance helps show progress as you update today’s balance. Mortgage is listed but kept outside the non-mortgage snowball target.</div><div class="modal-actions"><button type="button" class="button" data-action="modal-close">Cancel</button><button class="button primary">Save account</button></div></form></section></div>`;
   }
   if (modal === "transaction" || modal?.type === "transaction") {
     const transaction=modal.type==="transaction"?state.transactions.find(item=>item.id===modal.id):null;
@@ -879,12 +920,12 @@ async function saveAccount(event) {
   const balance=Number(data.get("balance"));
   const startingBalance=Number(data.get("startingBalance"));
   const aprText=String(data.get("apr")||"0").trim();
-  const apr=Number(aprText);
   const minimumRaw=String(data.get("minimumPayment")||"").trim();
   const minimumPayment=minimumRaw===""?null:Number(minimumRaw);
   const limit=Number(data.get("limit")||0);
   const acb=Number(data.get("acb")||0);
-  if([balance,startingBalance,apr,limit,acb].some(value=>!Number.isFinite(value)||value<0)||(minimumPayment!==null&&(!Number.isFinite(minimumPayment)||minimumPayment<0))){showToast("Balances, payments, limits, and rates must be non-negative numbers.");return;}
+  if([balance,startingBalance,limit,acb].some(value=>!Number.isFinite(value)||value<0)||(minimumPayment!==null&&(!Number.isFinite(minimumPayment)||minimumPayment<0))||
+    (kind==="liability"&&!HouseholdMath.isNonNegativeDecimal(aprText,2))){showToast("Balances, payments, limits, and rates must be non-negative numbers with rates up to two decimal places.");return;}
   if(accountType==="Credit card"&&minimumPayment===null){showToast("Enter the credit card’s required minimum monthly payment.");app.querySelector("#minimumPaymentInput")?.focus();return;}
   const fixedApr=HouseholdMath.fixedDecimal(aprText, 2);
   const id=String(data.get("id")||"");

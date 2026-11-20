@@ -27,6 +27,17 @@
     return `${match[1] === "-" ? "-" : ""}${(scaled / scale).toFixed(places)}`;
   }
 
+  function isNonNegativeDecimal(value, places = 2) {
+    return new RegExp(`^\\d+(?:\\.\\d{1,${places}})?$`).test(String(value ?? "").trim());
+  }
+
+  function toBasisPoints(value) {
+    if (!isNonNegativeDecimal(value, 2)) return 0;
+    const text = String(value).trim();
+    const match = text.match(/^(\d+)(?:\.(\d{1,2}))?$/);
+    return Number(match[1]) * 100 + Number((match[2] || "").padEnd(2, "0"));
+  }
+
   function centsFor(record, key) {
     const cents = record?.[`${key}Cents`];
     return Number.isSafeInteger(cents) ? cents : toCents(record?.[key]);
@@ -42,8 +53,9 @@
       if (view === "Combined Household" || owner === view.replace(" Only", "")) return cents;
       return 0;
     }
-    const basisPoints = Math.max(0, Math.min(10000, toCents(jointShare)));
-    return roundDivision(cents * basisPoints, 10000);
+    const basisPoints = Math.max(0, Math.min(10000, toBasisPoints(jointShare)));
+    const partnerAShare = roundDivision(cents * basisPoints, 10000);
+    return view === "Partner B Only" ? cents - partnerAShare : partnerAShare;
   }
 
   function splitShares(splits, owner, view, jointShare, targetCents) {
@@ -52,15 +64,22 @@
         ? centsFor(split, "amount")
         : 0);
     }
-    const basisPoints = Math.max(0, Math.min(10000, toCents(jointShare)));
+    const basisPoints = Math.max(0, Math.min(10000, toBasisPoints(jointShare)));
     const allocations = splits.map((split, index) => {
       const numerator = centsFor(split, "amount") * basisPoints;
       return { index, cents: Math.floor(numerator / 10000), remainder: numerator % 10000 };
     });
-    let remaining = targetCents - allocations.reduce((sum, allocation) => sum + allocation.cents, 0);
+    const partnerATarget = roundDivision(
+      splits.reduce((sum, split) => sum + centsFor(split, "amount"), 0) * basisPoints,
+      10000
+    );
+    let remaining = partnerATarget - allocations.reduce((sum, allocation) => sum + allocation.cents, 0);
     allocations.slice().sort((left, right) => right.remainder - left.remainder || left.index - right.index)
       .slice(0, remaining)
       .forEach((allocation) => { allocations[allocation.index].cents += 1; });
+    if (view === "Partner B Only") {
+      return allocations.map((allocation, index) => centsFor(splits[index], "amount") - allocation.cents);
+    }
     return allocations.map((allocation) => allocation.cents);
   }
 
@@ -124,9 +143,7 @@
 
   function signedTransactionCents(transaction, view = "Combined Household", jointShare = 50) {
     const amount = shareCents(centsFor(transaction, "amount"), transaction.owner, view, jointShare);
-    if (transaction.type === "income") return amount;
-    if (transaction.type === "expense") return -amount;
-    return 0;
+    return transaction.type === "expense" ? -amount : amount;
   }
 
   function sortTransactionsBySignedAmount(records, direction = "asc", view = "Combined Household", jointShare = 50) {
@@ -138,15 +155,47 @@
     });
   }
 
+  function calculateBudgetPlan(budget, incomeCents, actualCentsByCategory, daysInMonth, elapsedDays) {
+    const basisPoints = budget.map((item) => toBasisPoints(item.target));
+    if (basisPoints.reduce((sum, value) => sum + value, 0) !== 10000) {
+      throw new Error("Budget target percentages must add up to 100%.");
+    }
+    const allocations = budget.map((item, index) => {
+      const numerator = incomeCents * basisPoints[index];
+      return {
+        category: item.category,
+        basisPoints: basisPoints[index],
+        targetCents: Math.floor(numerator / 10000),
+        remainder: numerator % 10000,
+        actualCents: actualCentsByCategory[item.category] || 0
+      };
+    });
+    const targetRemainder = incomeCents - allocations.reduce((sum, item) => sum + item.targetCents, 0);
+    allocations.slice().sort((left, right) => right.remainder - left.remainder)
+      .slice(0, targetRemainder)
+      .forEach((item) => { item.targetCents += 1; });
+    for (const item of allocations) {
+      item.projectedCents = roundDivision(item.actualCents * daysInMonth, elapsedDays);
+    }
+    return {
+      rows: allocations,
+      targetTotalCents: allocations.reduce((sum, item) => sum + item.targetCents, 0),
+      projectedTotalCents: allocations.reduce((sum, item) => sum + item.projectedCents, 0)
+    };
+  }
+
   return {
     calculateLedger,
+    calculateBudgetPlan,
     centsFor,
     fixedDecimal,
+    isNonNegativeDecimal,
     shareCents,
     splitShares,
     transactionCategoryCents,
     signedTransactionCents,
     sortTransactionsBySignedAmount,
+    toBasisPoints,
     toCents
   };
 });

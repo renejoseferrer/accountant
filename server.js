@@ -401,7 +401,9 @@ const server = http.createServer(async (req, res) => {
             !["cash", "investment", "liability"].includes(account.kind) ||
             !["Partner A", "Partner B", "Joint"].includes(account.owner) ||
             !Number.isFinite(Number(account.balance)) || Number(account.balance) < 0 ||
-            (account.kind === "liability" && [account.apr, account.minimumPayment, account.limit, account.startingBalance].some((value) => value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0))) ||
+            (account.kind === "liability" &&
+              (account.apr !== undefined && account.apr !== null && !HouseholdMath.isNonNegativeDecimal(account.apr, 2) ||
+                [account.minimumPayment, account.limit, account.startingBalance].some((value) => value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0)))) ||
             (account.kind === "investment" && [account.acb].some((value) => value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0)))
           ) || validAccounts.size !== update.accounts.length) {
             return send(res, 400, { error: "Accounts need a unique ID, name, valid owner and type, and non-negative numeric balances." });
