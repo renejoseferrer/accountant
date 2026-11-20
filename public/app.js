@@ -5,7 +5,7 @@ const navItems = [
   ["cashflow", "Cash flow & forecast", "↗"],
   ["ledger", "Smart ledger", "≡"],
   ["debt", "Debt & amortization", "↘"],
-  ["plan", "Baby Steps & receipts", "✦"],
+  ["plan", "Expenses & receipts", "✦"],
   ["investments", "Investments & tax", "◉"]
 ];
 const definitions = {
@@ -77,6 +77,8 @@ let modal = "";
 let selectedPartner = "Partner A";
 let debtSort = "snowball";
 let receiptDraft = null;
+let receiptAttachmentDraft = null;
+let receiptTotalTouched = false;
 let receiptSearch = "";
 let forecastDays = 30;
 let ledgerSort = { key: "date", direction: "desc" };
@@ -171,7 +173,7 @@ function visibleAccounts(filter = () => true) {
   })).filter((account) => relevantOwner(account.owner) > 0);
 }
 function visibleTransactions() {
-  return state.transactions.filter((transaction) => relevantOwner(transaction.owner) > 0).map((transaction) => ({
+  return state.transactions.filter((transaction) => transaction.status !== "Superseded" && relevantOwner(transaction.owner) > 0).map((transaction) => ({
     ...transaction,
     shownAmount: fromCents(HouseholdMath.shareCents(amountCents(transaction, "amount"), transaction.owner, view, jointShare))
   }));
@@ -278,7 +280,9 @@ function ownerBreakdown() {
 function transactionRow(t) {
   const signed = t.type === "income" ? "+" : t.type === "expense" ? "−" : "";
   const badge = t.type === "transfer" ? `<span class="pill">${esc(t.category === "Debt repayment" ? "Debt repayment · neutral" : t.category === "Investment contribution" ? "Investment · neutral" : t.category === "General savings" ? "General savings · neutral" : "Internal transfer · neutral")}</span>` : t.type === "income" ? `<span class="pill green">Income</span>` : Array.isArray(t.splits) && t.splits.length ? `<span class="pill">${esc(t.splits.map((split)=>split.category).join(" + "))}</span>` : `<span class="pill">${esc(t.category)}</span>`;
-  return `<tr><td data-label="Date">${dateLabel(t.date)}</td><td data-label="Merchant"><div class="merchant-cell"><span class="merchant-icon">${esc(iconFor(t.merchant))}</span><span>${esc(t.merchant)}${t.mcc ? `<small class="muted" style="display:block;font-weight:400;margin-top:3px">MCC ${esc(t.mcc)}</small>` : ""}</span></div></td><td data-label="Category">${badge}</td><td data-label="Owner">${esc(t.owner)}</td><td data-label="Account">${esc(t.account)}</td><td data-label="Amount" class="amount">${signed}${cad(t.shownAmount ?? t.amount, 2)}</td><td data-label="Actions">${t.manual?`<button class="table-action" data-edit-transaction="${esc(t.id)}">Edit</button>`:""}<button class="table-action" data-split="${esc(t.id)}">Split</button></td></tr>`;
+  const receiptAction = t.receiptId ? `<button class="table-action" data-view-receipt="${esc(t.receiptId)}">Items / proof</button>` : "";
+  const review = t.matchStatus === "needs review" ? `<span class="pill amber">Needs review</span>` : "";
+  return `<tr><td data-label="Date">${dateLabel(t.date)}</td><td data-label="Merchant"><div class="merchant-cell"><span class="merchant-icon">${esc(iconFor(t.merchant))}</span><span>${esc(t.merchant)}${t.mcc ? `<small class="muted" style="display:block;font-weight:400;margin-top:3px">MCC ${esc(t.mcc)}</small>` : ""}</span></div></td><td data-label="Category">${badge} ${review}</td><td data-label="Owner">${esc(t.owner)}</td><td data-label="Account">${esc(t.account)}</td><td data-label="Amount" class="amount">${signed}${cad(t.shownAmount ?? t.amount, 2)}</td><td data-label="Actions">${t.manual?`<button class="table-action" data-edit-transaction="${esc(t.id)}">Edit</button>`:""}${receiptAction}<button class="table-action" data-split="${esc(t.id)}">Split</button></td></tr>`;
 }
 function recentTransactions(limit = 5, filter = () => true) {
   const rows = visibleTransactions().filter(filter).slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, limit);
@@ -426,7 +430,9 @@ function cashflowScreen() {
     <div class="grid content-grid"><section class="card"><div class="card-header"><div><h2>Monthly budget targets</h2><p>${budgetSplitLabel()} split · based on estimated household take-home pay</p></div><button class="button small" data-action="budget">Customize targets</button></div>${budgetMarkup()}</section><section class="card"><div class="card-header"><div><h2>Fixed vs. variable</h2><p>All actual spending is included in one of these two groups.</p></div></div><div class="metric-list"><div class="metric-row"><span>${term("Gross vs. Net Income", "", `${cad(m.grossMonthly)} gross − ${cad(subtractMoney(m.grossMonthly,m.netMonthly))} estimated deductions = ${cad(m.netMonthly)} planned net deposits`)}</span><strong>${cad(m.income)} cleared net</strong></div><div class="metric-row"><span>${term("Fixed vs. Variable Expenses", "", `${cad(fixedExpenses)} fixed-style + ${cad(variableExpenses)} variable-style = ${cad(m.expenses)}`)}</span><strong>${cad(m.expenses)}</strong></div><div class="metric-row"><span>Fixed-style categories</span><strong>${cad(fixedExpenses)}</strong></div><div class="metric-row"><span>Variable-style categories</span><strong>${cad(variableExpenses)}</strong></div><div class="metric-row"><span>${term("Savings Rate", "", `${cad(subtractMoney(m.income,m.expenses))} ÷ ${cad(m.income)} = ${pct(m.savingsRate,1)}`)}</span><strong>${pct(m.savingsRate,1)}</strong></div></div></section></div>`;
 }
 function ledgerScreen() {
-  let transactions = visibleTransactions().filter((t) => (!search || `${t.merchant} ${t.category} ${t.account} ${t.owner}`.toLowerCase().includes(search.toLowerCase())) && (categoryFilter === "All categories" || t.category === categoryFilter));
+  let transactions = visibleTransactions().filter((t) =>
+    (!search || `${t.merchant} ${t.category} ${t.account} ${t.owner}`.toLowerCase().includes(search.toLowerCase())) &&
+    (categoryFilter === "All categories" || t.category === categoryFilter || (t.splits||[]).some((split)=>split.category===categoryFilter)));
   if (ledgerSort.key === "amount") {
     transactions = HouseholdMath.sortTransactionsBySignedAmount(transactions, ledgerSort.direction, view, jointShare);
   } else {
@@ -435,8 +441,8 @@ function ledgerScreen() {
       return (compared || a.id.localeCompare(b.id)) * (ledgerSort.direction === "asc" ? 1 : -1);
     });
   }
-  const categories = ["All categories", ...new Set(state.transactions.map((t) => t.category))];
-  return `${pageHeading("Every dollar, in the right place", "Smart ledger", "Card purchases count as expenses; repayments and transfers stay neutral.", `<button class="button" data-action="transaction-add">+ Add entry</button><button class="button" data-modal="connect-choice">Connect an account</button><button class="button" data-modal="connect">Connect Plaid</button><button class="button primary" data-modal="import">↑ Import CSV</button>`)}
+  const categories = ["All categories", ...new Set(state.transactions.flatMap((t) => [t.category,...(t.splits||[]).map((split)=>split.category)]))];
+  return `${pageHeading("Every dollar, in the right place", "Smart ledger", "Card purchases count as expenses; repayments and transfers stay neutral.", `<button class="button" data-action="transaction-add">+ Add income / debt payment</button><button class="button" data-action="receipt-manual">+ Add itemized expense</button><button class="button" data-modal="connect-choice">Connect an account</button><button class="button" data-modal="connect">Connect Plaid</button><button class="button primary" data-modal="import">↑ Import CSV</button>`)}
     <div class="notice bank-sync-status">${plaidConfigured ? "Plaid is configured. You can connect a read-only account or import a CSV statement." : `Bank sync not connected — use CSV import. <button class="button link" data-modal="import">Choose a CSV statement</button>`}</div>
     <div class="grid stats-grid">${statCard("Actual income", cad(metrics().income), "Cleared deposits only", "↗", `${cad(metrics().income)} actual income`)}${statCard("Purchases & bills", cad(metrics().expenses), "Includes credit-card purchases once", "↘", `${cad(metrics().expenses)} categorized expenses`)}${statCard("Monthly Debt Paid", cad(metrics().debtPaid), "Not double-counted as an expense", "⌁", `${cad(metrics().debtPaid)} cleared repayments`)}${statCard("Investment contributions", cad(metrics().invested), "Tracked separately from spending", "◉", `${cad(metrics().invested)} contributions`)}</div>
     <section class="card section-card"><div class="section-title-row"><div><h2>Transactions</h2><p class="muted" style="font-size:11px;margin:5px 0 0">${transactions.length} records · use Split to allocate a multi-category purchase</p></div><button class="button small" data-action="merchant-rules">Merchant rules (${state.merchantRules.length})</button></div><div class="filter-row"><input class="input search-input" id="ledgerSearch" value="${esc(search)}" placeholder="Search merchant, category, account…"><select class="select" id="categoryFilter">${categories.map((category) => `<option ${category === categoryFilter ? "selected" : ""}>${esc(category)}</option>`).join("")}</select><span class="pill">Transfers excluded from expenses</span></div><div class="table-wrap ledger-table-wrap"><table class="ledger-table mobile-table">${ledgerTableHeader(["Date", "Merchant", "Category", "Owner", "Account", "Amount", "Actions"])}<tbody>${transactions.length ? transactions.map(transactionRow).join("") : `<tr><td colspan="7" class="empty-state">No transactions match these filters.</td></tr>`}</tbody></table></div></section>
@@ -473,6 +479,34 @@ function debtScreen() {
     }).join("")}</div>
     ${sectionCard("How the snowball rolls", "Pay minimums on every debt, then aim your extra amount at the current target. Once it is paid off, its minimum joins your extra amount for the next smallest debt.", `<div class="notice">The snowball favors momentum, not lowest interest cost. Keep all required minimums current; compare the highest-rate view if reducing interest is your priority. Mortgage stays outside Baby Step 2.</div>`)}`;
 }
+function receiptItemCents(item) {
+  if (Number.isSafeInteger(item.lineTotalCents)) return item.lineTotalCents;
+  return amountCents(item, "amount");
+}
+function receiptCandidate(receipt, transaction) {
+  if (!receipt || !transaction || transaction.type !== "expense") return false;
+  const receiptDate = new Date(`${receipt.date}T12:00:00Z`);
+  const transactionDate = new Date(`${transaction.date}T12:00:00Z`);
+  if (!Number.isFinite(receiptDate.getTime()) || !Number.isFinite(transactionDate.getTime()) ||
+      Math.abs(receiptDate - transactionDate) > 3 * 86400000) return false;
+  const receiptName = String(receipt.merchant || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const transactionName = String(transaction.merchant || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!receiptName || !transactionName) return false;
+  if (receiptName.includes(transactionName) || transactionName.includes(receiptName)) return true;
+  return String(receipt.merchant || "").toLowerCase().split(/[^a-z0-9]+/)
+    .some((word) => word.length >= 4 && String(transaction.merchant || "").toLowerCase().includes(word));
+}
+function receiptSuggestions() {
+  return (state.groceryReceipts || []).flatMap((receipt) => {
+    if (receipt.matchedTransactionId) return [];
+    return state.transactions.filter((transaction) =>
+      transaction.status === "Actual" && transaction.type === "expense" &&
+      transaction.source !== "receipt" &&
+      (transaction.bankImported || transaction.note === "CSV import" || transaction.note === "Bank sync") &&
+      !transaction.receiptId && receiptCandidate(receipt, transaction)
+    ).map((transaction) => ({ receipt, transaction }));
+  });
+}
 function babyStepsScreen() {
   const m=metrics();
   const starter=amount(visibleAccounts(a=>a.kind==="cash"&&/emergency|starter fund/i.test(`${a.name} ${a.bucket||""}`)));
@@ -490,10 +524,28 @@ function babyStepsScreen() {
     ["Build wealth","Invest at least 15% toward long-term wealth; redirect snowball payments here when debt is clear.",m.invested,Math.max(1,fromCents(roundedDivision(toCents(m.netMonthly)*15,100))),"Investments bucket · 15%"]
   ];
   const receipts=state.groceryReceipts||[];
-  const filteredItems=receipts.flatMap(receipt=>(receipt.items||[]).map(item=>({...item,merchant:receipt.merchant,date:receipt.date}))).filter(item=>!receiptSearch||`${item.name} ${item.merchant} ${item.bucket}`.toLowerCase().includes(receiptSearch.toLowerCase())).sort((a,b)=>(b.date||"").localeCompare(a.date||""));
-  return `${pageHeading("Simple steps, one household plan","Baby Steps & grocery receipts","See how your monthly split supports debt payoff, a safety cushion, and long-term investing.",`<button class="button primary" data-action="receipt-scan">＋ Scan a receipt</button>`)}
+  const filteredReceipts=receipts.filter((receipt)=>
+    !receiptSearch||`${receipt.merchant} ${(receipt.items||[]).map((item)=>item.name).join(" ")}`.toLowerCase().includes(receiptSearch.toLowerCase())
+  ).sort((a,b)=>(b.date||"").localeCompare(a.date||""));
+  const suggestions=receiptSuggestions();
+  const suggestionMarkup=suggestions.length?`<section class="card section-card"><div class="section-title-row"><div><h2>Possible bank matches</h2><p class="muted" style="font-size:11px;margin:5px 0 0">Check the store and date. Nothing is linked until you confirm.</p></div></div>${suggestions.map(({receipt,transaction})=>{
+    const receiptCents=Number(receipt.receiptTotalCents??receipt.expenseTotalCents??0);
+    const bankCents=amountCents(transaction,"amount");
+    const difference=bankCents-receiptCents;
+    return `<article class="receipt-card"><div class="receipt-card-head"><strong>${esc(receipt.merchant)} · ${dateLabel(receipt.date)}</strong><span class="pill amber">Suggested · not matched</span></div><div class="receipt-check-numbers"><span>Receipt: ${cad(fromCents(receiptCents))}</span><span>Bank: ${cad(fromCents(bankCents))}</span><span>Difference: ${cad(fromCents(difference))}</span></div><p class="muted">${esc(transaction.merchant)} · ${dateLabel(transaction.date)} · ${esc(transaction.account||"Imported account")}</p><button class="button small primary" data-confirm-receipt="${esc(receipt.id)}" data-match-transaction="${esc(transaction.id)}">Confirm this match</button></article>`;
+  }).join("")}</section>`:"";
+  const receiptMarkup=filteredReceipts.length?filteredReceipts.map((receipt)=>{
+    const totalCents=Number(receipt.receiptTotalCents??receipt.expenseTotalCents??0);
+    const bankCents=Number(receipt.bankAmountCents);
+    const status=receipt.matchStatus==="matched"?`<span class="pill green">Matched · amounts agree</span>`:receipt.matchStatus==="needs review"?`<span class="pill red">Needs review · ${cad(fromCents(receipt.differenceCents||0))} difference</span>`:`<span class="pill amber">Not matched</span>`;
+    const items=(receipt.items||[]).map((item)=>`<li><span>${esc(item.name)} · ${Number(item.quantity||1)} × ${cad(fromCents(Number(item.unitPriceCents??receiptItemCents(item))))} · ${esc(item.category||item.bucket||"Uncategorized")}</span><strong>${cad(fromCents(receiptItemCents(item)))}</strong></li>`).join("");
+    const agreement=receipt.matchedTransactionId?`<div class="receipt-check-numbers"><span>Receipt: ${cad(fromCents(totalCents))}</span><span>Ledger: ${cad(fromCents(Number(receipt.ledgerTotalCents??bankCents)))}</span><span>Bank: ${cad(fromCents(bankCents))}</span></div>`:`<p class="muted">Receipt and ledger total: ${cad(fromCents(totalCents))} · Waiting for a bank match.</p>`;
+    return `<article class="receipt-card"><div class="receipt-card-head"><div><strong>${esc(receipt.merchant)}</strong><div class="muted">${dateLabel(receipt.date)} · ${esc(receipt.owner||"Household")} · ${esc(state.accounts.find((account)=>account.id===receipt.accountId)?.name||"Payment account")}</div></div>${status}</div><ul class="receipt-item-list">${items}</ul><div class="receipt-card-total"><strong>Receipt total ${cad(fromCents(totalCents))}</strong>${agreement}</div><div class="receipt-card-actions"><button class="button small" data-view-receipt="${esc(receipt.id)}">View expense details</button>${receipt.hasAttachment?`<a class="button small" href="/api/receipts/${encodeURIComponent(receipt.id)}/file" target="_blank" rel="noopener">Open original ${receipt.attachmentType==="application/pdf"?"PDF":"photo"}</a>`:'<span class="muted">No receipt file attached</span>'}</div></article>`;
+  }).join(""):`<div class="empty-state">${receipts.length?"No saved expenses match your search.":"No itemized expenses yet. Add one by hand or upload a receipt photo."}</div>`;
+  return `${pageHeading("Simple steps, one household plan","Baby Steps & itemized expenses","Keep receipt proof and reviewed line items with each household expense.",`<button class="button" data-action="receipt-manual">+ Add expense by hand</button><button class="button primary" data-action="receipt-scan">＋ Upload / take receipt photo</button>`)}
     ${sectionCard("Your Baby Steps",`Current focus: Step ${currentStep} · based on balances you’ve entered`,`${steps.map((step,index)=>{const number=index+1;const active=number===currentStep;const complete=number<currentStep;const progress=Math.min(100,Math.max(0,step[3]?step[2]/step[3]*100:0));return `<div class="baby-step ${active?"active":""} ${complete?"complete":""}"><span class="step-number">${complete?"✓":number}</span><div class="step-copy"><strong>${esc(step[0])}</strong><p>${esc(step[1])}</p><div class="progress"><span style="width:${progress}%"></span></div><small>${number===2?`${cad(nonMortgageDebt)} non-mortgage debt remains`:number===1?`${cad(starter)} of ${cad(1000)} starter cushion`:number===3?`${cad(fullFund)} of ${cad(fullFundTarget)} full-fund target`:`${cad(m.invested)} recorded investment contributions · target guide ${cad(step[3])}`}</small><span class="pill">${esc(step[4])}</span></div></div>`}).join("")}<div class="notice">A simple adaptation of Dave Ramsey’s Baby Steps for your household plan—not financial advice. The 15% savings bucket builds your emergency cushion; the 15% investments bucket supports long-term wealth. During the debt step, use the 10% debt bucket plus any planned snowball extra. When non-mortgage debt is cleared, consider rolling that payment into wealth building.</div>`)}
-    ${sectionCard("Receipt reader & grocery list","Choose an image from your phone camera or photo library. OCR runs in your browser; the image itself is not uploaded.",`<div class="filter-row"><input class="input search-input" id="receiptSearch" placeholder="Search past grocery items…" value="${esc(receiptSearch)}"><button class="button small" data-action="receipt-scan">Scan / add receipt</button></div>${filteredItems.length?`<div class="table-wrap"><table class="mobile-table receipt-list">${tableHeader(["Date","Store","Item","Budget bucket","Amount"])}<tbody>${filteredItems.map(item=>`<tr><td>${item.date?dateLabel(item.date):"—"}</td><td>${esc(item.merchant)}</td><td><strong>${esc(item.name)}</strong></td><td><span class="pill">${esc(item.bucket)}</span></td><td class="amount">${cad(item.amount,2)}</td></tr>`).join("")}</tbody></table></div>`:`<div class="empty-state">${receipts.length?"No receipt items match your search.":"No scanned receipts yet. Scan a receipt to build a searchable household grocery list."}</div>`}`)}`;
+    ${suggestionMarkup}
+    ${sectionCard("Itemized expenses & receipt proof","Each line item is categorized separately. An imported bank transaction is only linked after you confirm it.",`<div class="filter-row"><input class="input search-input" id="receiptSearch" placeholder="Search store or item…" value="${esc(receiptSearch)}"><button class="button small" data-action="receipt-manual">Add by hand</button><button class="button small" data-action="receipt-scan">Upload / take photo</button></div>${receiptMarkup}`)}`;
 }
 function investmentsScreen() {
   const accounts = visibleAccounts((a) => a.kind === "investment");
@@ -543,12 +595,30 @@ function modalMarkup() {
     const transaction=modal.type==="transaction"?state.transactions.find(item=>item.id===modal.id):null;
     const today=householdDate();
     const categories=["Groceries","Housing & Utilities","Transit & Fuel","Childcare","Medical","Dining","Shopping","Subscriptions","Salary","Debt repayment","Other"];
-    return `<div class="modal-backdrop" data-action="backdrop"><section class="modal"><div class="modal-head"><div><div class="eyebrow">Manual ledger entry</div><h2>${transaction?"Edit":"Add"} income, spending, or debt payment</h2><p class="subtitle" style="margin-top:6px">Credit purchases increase debt. A repayment reduces both chequing cash and the selected debt.</p></div><button class="modal-close" data-action="modal-close">×</button></div><form id="transactionForm"><input type="hidden" name="id" value="${esc(transaction?.id||"")}"><div class="form-row"><label>Description or merchant</label><input class="input" name="merchant" required maxlength="100" placeholder="e.g. Weekly groceries" value="${esc(transaction?.merchant||"")}"></div><div class="grid two-col"><div class="form-row"><label>Entry type</label><select class="select" name="type"><option value="expense" ${transaction?.type==="expense"?"selected":""}>Spending</option><option value="income" ${transaction?.type==="income"?"selected":""}>Income</option><option value="debt" ${transaction?.category==="Debt repayment"?"selected":""}>Debt payment</option></select></div><div class="form-row"><label>Amount (CAD)</label><input class="input" name="amount" type="number" min="0.01" step="0.01" required value="${transaction?.amount??""}"></div></div><div class="grid two-col"><div class="form-row"><label>Budget category</label><select class="select" name="category">${categories.map(category=>`<option ${category===(transaction?.category||"Groceries")?"selected":""}>${category}</option>`).join("")}</select></div><div class="form-row"><label>Date</label><input class="input" name="date" type="date" value="${esc(transaction?.date||today)}" required></div></div><div class="form-row"><label>Account (cash source for debt payment)</label><select class="select" name="accountId">${state.accounts.filter(account=>account.kind==="cash").map(account=>`<option value="${esc(account.id)}" ${account.name===transaction?.account&&account.owner===transaction?.owner?"selected":""}>${esc(account.name)} · ${esc(account.owner)}</option>`).join("")}</select></div><div class="form-row" id="debtTargetWrap" ${transaction?.category==="Debt repayment"?"":"hidden"}><label>Debt being paid</label><select class="select" name="debtAccountId">${state.accounts.filter(account=>account.kind==="liability").map(account=>`<option value="${esc(account.id)}" ${account.id===transaction?.debtAccountId?"selected":""}>${esc(account.name)} · ${esc(account.owner)}</option>`).join("")}</select></div><div class="notice">For future bills or paydays, use Cash flow → Add recurring item. Debt payments are transfers, not extra spending.</div><div class="modal-actions"><button type="button" class="button" data-action="modal-close">Cancel</button><button class="button primary">Save entry</button></div></form></section></div>`;
+    const typeOptions=transaction?`<option value="expense" ${transaction.type==="expense"?"selected":""}>Spending</option><option value="income" ${transaction.type==="income"?"selected":""}>Income</option><option value="debt" ${transaction.category==="Debt repayment"?"selected":""}>Debt payment</option>`:`<option value="income">Income</option><option value="debt">Debt payment</option>`;
+    return `<div class="modal-backdrop" data-action="backdrop"><section class="modal"><div class="modal-head"><div><div class="eyebrow">Manual ledger entry</div><h2>${transaction?"Edit":"Add"} ${transaction?"ledger entry":"income or debt payment"}</h2><p class="subtitle" style="margin-top:6px">Expenses are added with item details and receipt proof. A repayment reduces cash and the selected debt.</p></div><button class="modal-close" data-action="modal-close">×</button></div><form id="transactionForm"><input type="hidden" name="id" value="${esc(transaction?.id||"")}"><div class="form-row"><label>Description or merchant</label><input class="input" name="merchant" required maxlength="100" placeholder="e.g. Paycheque" value="${esc(transaction?.merchant||"")}"></div><div class="grid two-col"><div class="form-row"><label>Entry type</label><select class="select" name="type">${typeOptions}</select></div><div class="form-row"><label>Amount (CAD)</label><input class="input" name="amount" type="number" min="0.01" step="0.01" required value="${transaction?.amount??""}"></div></div><div class="grid two-col"><div class="form-row"><label>Budget category</label><select class="select" name="category">${categories.map(category=>`<option ${category===(transaction?.category||"Groceries")?"selected":""}>${category}</option>`).join("")}</select></div><div class="form-row"><label>Date</label><input class="input" name="date" type="date" value="${esc(transaction?.date||today)}" required></div></div><div class="form-row"><label>Account (cash source for debt payment)</label><select class="select" name="accountId">${state.accounts.filter(account=>account.kind==="cash").map(account=>`<option value="${esc(account.id)}" ${account.name===transaction?.account&&account.owner===transaction?.owner?"selected":""}>${esc(account.name)} · ${esc(account.owner)}</option>`).join("")}</select></div><div class="form-row" id="debtTargetWrap" ${transaction?.category==="Debt repayment"?"":"hidden"}><label>Debt being paid</label><select class="select" name="debtAccountId">${state.accounts.filter(account=>account.kind==="liability").map(account=>`<option value="${esc(account.id)}" ${account.id===transaction?.debtAccountId?"selected":""}>${esc(account.name)} · ${esc(account.owner)}</option>`).join("")}</select></div><div class="notice">For future bills or paydays, use Cash flow → Add recurring item. Debt payments are transfers, not extra spending.</div><div class="modal-actions"><button type="button" class="button" data-action="modal-close">Cancel</button><button class="button primary">Save entry</button></div></form></section></div>`;
   }
-  if (modal === "receipt-scan") {
-    const draft=receiptDraft||{merchant:"",date:householdDate(),tax:0,items:[]};
-    const buckets=["Essentials","Fun / Wants","Debt Payoff","General Savings","Investments / Wealth"];
-    return `<div class="modal-backdrop" data-action="backdrop"><section class="modal receipt-modal"><div class="modal-head"><div><div class="eyebrow">Private on-device scanning</div><h2>Read a receipt</h2><p class="subtitle" style="margin-top:6px">Choose a receipt photo. OCR runs in your browser; the photo is not uploaded.</p></div><button class="modal-close" data-action="modal-close">×</button></div><div class="drop-zone"><label for="receiptImage" class="button small">Take photo / choose image</label><input type="file" id="receiptImage" accept="image/*" capture="environment" hidden><div id="receiptOcrStatus" style="margin-top:9px">Image text will be read on this device.</div></div><div class="form-row" style="margin-top:15px"><label>Store</label><input id="receiptMerchant" class="input" maxlength="100" value="${esc(draft.merchant)}"></div><div class="grid two-col"><div class="form-row"><label>Receipt date</label><input id="receiptDate" class="input" type="date" value="${esc(draft.date)}"></div><div class="form-row"><label>Tax total</label><input id="receiptTax" class="input" type="number" min="0" step="0.01" value="${Number(draft.tax||0)}"></div></div><div class="receipt-items-head"><strong>Items · assign each to a budget bucket</strong><button class="button small" data-action="receipt-add-item">+ Add item</button></div><div id="receiptItems">${draft.items.map((item,index)=>`<div class="receipt-item-row"><input class="input receipt-item-name" aria-label="Item name" value="${esc(item.name)}" placeholder="Item"><input class="input receipt-item-amount" aria-label="Item amount" type="number" min="0" step="0.01" value="${Number(item.amount||0)}"><select class="select receipt-item-bucket" aria-label="Budget bucket">${buckets.map(bucket=>`<option ${bucket===(item.bucket||"Essentials")?"selected":""}>${bucket}</option>`).join("")}</select><button class="button small" type="button" data-remove-receipt-item="${index}" aria-label="Remove item">×</button></div>`).join("")||`<p class="muted" id="receiptEmpty">Choose a clear receipt photo or add items manually.</p>`}</div><div class="notice" style="margin-top:12px">OCR can misread faded or unusual receipts. Check the store, date, tax, each item, and amount before saving. Only item text and amounts are stored.</div><div class="modal-actions"><button class="button" data-action="modal-close">Cancel</button><button class="button primary" data-action="receipt-save">Save receipt</button></div></section></div>`;
+  if (modal === "receipt-scan" || modal === "receipt-entry") {
+    const accounts=state.accounts.filter((account)=>account.kind==="cash"||account.kind==="liability");
+    const defaultAccount=accounts.find((account)=>account.owner===signedInUser&&account.kind==="cash")||accounts[0];
+    const draft=receiptDraft||{merchant:"",date:householdDate(),receiptTotalCents:0,accountId:defaultAccount?.id||"",items:[]};
+    const categories=["Groceries","Housing & Utilities","Dining","Transit & Fuel","Childcare","Medical","Shopping","Subscriptions","Other"];
+    const itemTotal=draft.items.reduce((total,item)=>total+(Number.isSafeInteger(item.lineTotalCents)?item.lineTotalCents:Number(item.amountCents)||0),0);
+    const initialTotal=Number.isSafeInteger(draft.receiptTotalCents)?draft.receiptTotalCents:itemTotal;
+    const account=accounts.find((entry)=>entry.id===draft.accountId)||defaultAccount;
+    const attachmentPreview=receiptAttachmentDraft?.type?.startsWith("image/")?`<img class="receipt-preview" src="${receiptAttachmentDraft.dataUrl}" alt="Original receipt photo preview">`:receiptAttachmentDraft?.type==="application/pdf"?`<div class="notice">PDF attached: ${esc(receiptAttachmentDraft.name)} · ${Math.ceil(receiptAttachmentDraft.bytes/1024)} KB</div>`:"";
+    const status=receiptAttachmentDraft?.status||"Choose a receipt image for on-device OCR, or attach a PDF and enter items below.";
+    return `<div class="modal-backdrop" data-action="backdrop"><section class="modal receipt-modal"><div class="modal-head"><div><div class="eyebrow">${modal==="receipt-scan"?"Receipt photo review":"Manual itemized expense"}</div><h2>${modal==="receipt-scan"?"Review receipt items":"Add an itemized expense"}</h2><p class="subtitle" style="margin-top:6px">Nothing is saved until you review the details and the cents match.</p></div><button class="modal-close" data-action="modal-close">×</button></div>${modal==="receipt-scan"?`<div class="drop-zone"><label for="receiptImage" class="button small">Take photo / choose image or PDF</label><input type="file" id="receiptImage" accept="image/*,application/pdf" capture="environment" hidden><div id="receiptOcrStatus" style="margin-top:9px">${esc(status)}</div>${attachmentPreview}</div>`:""}<form id="receiptForm"><div class="form-row" style="margin-top:15px"><label>Store or merchant</label><input id="receiptMerchant" class="input" maxlength="100" required value="${esc(draft.merchant)}"></div><div class="grid two-col"><div class="form-row"><label>Date</label><input id="receiptDate" class="input" type="date" required value="${esc(draft.date)}"></div><div class="form-row"><label>Payment account</label><select class="select" id="receiptAccount" required>${accounts.map((entry)=>`<option value="${esc(entry.id)}" ${entry.id===account?.id?"selected":""}>${esc(entry.name)} · ${esc(entry.owner)} · ${entry.kind==="liability"?"Credit card":"Cash"}</option>`).join("")}</select></div></div><div class="form-row"><label>Receipt total (CAD)</label><input id="receiptTotal" class="input" type="number" min="0.01" step="0.01" required value="${fromCents(initialTotal).toFixed(2)}"></div><div class="receipt-items-head"><strong>Line items · categorize each item</strong><button class="button small" type="button" data-action="receipt-add-item">+ Add item</button></div><div class="receipt-item-labels"><span>Item</span><span>Qty</span><span>Price each</span><span>Line total</span><span>Category</span><span></span></div><div id="receiptItems">${draft.items.map((item,index)=>`<div class="receipt-item-row"><input class="input receipt-item-name" aria-label="Item name" maxlength="120" required value="${esc(item.name)}" placeholder="Item"><input class="input receipt-item-quantity" aria-label="Quantity" type="number" min="1" max="999" step="1" required value="${Number(item.quantity||1)}" placeholder="Qty"><input class="input receipt-item-price" aria-label="Price per item" type="number" min="0" step="0.01" required value="${fromCents(Number(item.unitPriceCents??item.amountCents??0)).toFixed(2)}" placeholder="Price each"><output class="receipt-line-total">${cad(fromCents(Number(item.lineTotalCents??item.amountCents??0)))}</output><select class="select receipt-item-category" aria-label="Item category">${categories.map((category)=>`<option value="${category}" ${category===(item.category||"Groceries")?"selected":""}>${category==="Dining"?"Eating Out (Dining)":category}</option>`).join("")}</select><button class="button small" type="button" data-remove-receipt-item="${index}" aria-label="Remove item">×</button></div>`).join("")||`<p class="muted" id="receiptEmpty">Add at least one line item.</p>`}</div><div class="receipt-total-check"><span>Items total: <strong id="receiptItemsTotal">${cad(fromCents(itemTotal))}</strong></span><span id="receiptDifference" role="status">Difference: ${cad(fromCents(initialTotal-itemTotal))}</span></div><div id="receiptValidation" class="notice ${initialTotal===itemTotal?"":"receipt-mismatch"}" role="alert">${initialTotal===itemTotal?"Item total and receipt total agree.":`Items are short by ${cad(fromCents(initialTotal-itemTotal))}. Saving is blocked until they agree.`}</div><div class="notice" style="margin-top:12px">Original photos and PDFs up to 1.5 MB are saved with the expense and can be reopened later. Photos are read on this device. Line totals use whole cents, and amount differences are never adjusted automatically.</div><div class="modal-actions"><button type="button" class="button" data-action="modal-close">Cancel</button><button class="button primary" type="submit">Save expense</button></div></form></section></div>`;
+  }
+  if (modal && modal.type === "receipt-view") {
+    const receipt=(state.groceryReceipts||[]).find((item)=>item.id===modal.id);
+    if(!receipt)return "";
+    const receiptCents=Number(receipt.receiptTotalCents??receipt.expenseTotalCents??0);
+    const linked=state.transactions.find((transaction)=>transaction.id===receipt.matchedTransactionId);
+    const ledgerCents=linked?amountCents(linked,"amount"):Number(receipt.expenseTotalCents??receiptCents);
+    const bankCents=Number(receipt.bankAmountCents??0);
+    const difference=receipt.matchedTransactionId?bankCents-receiptCents:null;
+    return `<div class="modal-backdrop" data-action="backdrop"><section class="modal receipt-modal"><div class="modal-head"><div><div class="eyebrow">Saved expense proof</div><h2>${esc(receipt.merchant)}</h2><p class="subtitle">${dateLabel(receipt.date)} · ${esc(receipt.owner||"Household")}</p></div><button class="modal-close" data-action="modal-close">×</button></div><ul class="receipt-item-list">${(receipt.items||[]).map((item)=>`<li><span>${esc(item.name)} · ${Number(item.quantity||1)} × ${cad(fromCents(Number(item.unitPriceCents??receiptItemCents(item))))} · ${esc(item.category||item.bucket||"Uncategorized")}</span><strong>${cad(fromCents(receiptItemCents(item)))}</strong></li>`).join("")}</ul><div class="receipt-check-numbers"><span>Receipt: ${cad(fromCents(receiptCents))}</span><span>Ledger: ${cad(fromCents(ledgerCents))}</span>${receipt.matchedTransactionId?`<span>Bank: ${cad(fromCents(bankCents))}</span>`:"<span>Bank: not matched</span>"}</div>${receipt.matchedTransactionId?`<div class="notice ${difference===0?"":"receipt-mismatch"}">${difference===0?"Matched: receipt, ledger, and bank totals agree to the cent.":`Needs review: bank and ledger differ from the receipt by ${cad(fromCents(difference))}.`}</div>`:`<div class="notice">This expense is in the ledger. It is not linked to a bank transaction yet.</div>`}${receipt.hasAttachment?`<a class="button" href="/api/receipts/${encodeURIComponent(receipt.id)}/file" target="_blank" rel="noopener">Open original ${receipt.attachmentType==="application/pdf"?"PDF":"photo"}</a>`:""}<div class="modal-actions"><button class="button" data-action="receipt-delete">Remove expense & proof</button><button class="button primary" data-action="modal-close">Done</button></div></section></div>`;
   }
   if (modal === "import") {
     return `<div class="modal-backdrop" data-action="backdrop"><section class="modal"><div class="modal-head"><div><div class="eyebrow">Canadian bank statements</div><h2>Import a CSV statement</h2><p class="subtitle" style="margin-top:6px">RBC, TD, CIBC, BMO, Scotiabank, Tangerine, EQ Bank and standard CSV formats.</p></div><button class="modal-close" data-action="modal-close">×</button></div><div class="form-row"><label for="csvOwner">Account owner</label><select class="select" id="csvOwner" style="width:100%"><option>Partner A</option><option>Partner B</option><option>Joint</option></select></div><div class="grid two-col"><div class="form-row"><label for="csvKind">Account type</label><select class="select" id="csvKind" style="width:100%"><option value="cash">Chequing / savings</option><option value="liability">Credit card</option></select></div><div class="form-row"><label for="csvAccount">Account name</label><input class="input" id="csvAccount" style="width:100%" value="Imported chequing"></div></div><div class="form-row"><label for="csvLast4">Last 4 digits (for duplicate protection)</label><input class="input" id="csvLast4" maxlength="4" value="0000" style="width:100%"></div><div class="drop-zone" id="dropZone"><strong>Drop your CSV statement here</strong>or <label class="button small" for="csvFile">choose a file</label><input type="file" id="csvFile" accept=".csv,text/csv" hidden><div id="fileName" style="margin-top:8px">Your statement is processed by this server.</div></div><div class="notice" style="margin-top:14px">Expected columns: Date, Description / Merchant, Amount (or separate Debit and Credit columns). Purchases, deposits, and internal transfers are routed based on account and merchant.</div><div class="modal-actions"><button class="button" data-action="modal-close">Cancel</button><button class="button primary" id="importButton">Import transactions</button></div></section></div>`;
@@ -567,7 +637,7 @@ function modalMarkup() {
     return `<div class="modal-backdrop" data-action="backdrop"><section class="modal"><div class="modal-head"><div><div class="eyebrow">Household budget model</div><h2>Customize your target split</h2><p class="subtitle">Targets should add up to 100%.</p></div><button class="modal-close" data-action="modal-close">×</button></div><form id="budgetForm">${state.budget.map((item, index) => `<div class="form-row"><label>${esc(item.category)} (%)</label><input class="input budget-input" type="number" min="0" max="100" step="0.01" value="${item.target}" data-index="${index}" required></div>`).join("")}<div class="notice" id="budgetTotal">Total: 100%</div><div class="modal-actions"><button type="button" class="button" data-action="modal-close">Cancel</button><button class="button primary">Save targets</button></div></form></section></div>`;
   }
   if (modal === "receipt") {
-    return `<div class="modal-backdrop" data-action="backdrop"><section class="modal"><div class="modal-head"><div><div class="eyebrow">Tax vault</div><h2>Add a tax-deductible receipt</h2></div><button class="modal-close" data-action="modal-close">×</button></div><form id="receiptForm"><div class="form-row"><label>Merchant</label><input class="input" name="merchant" required></div><div class="grid two-col"><div class="form-row"><label>Category</label><select class="select" name="category"><option>Medical</option><option>Childcare</option><option>Donations</option><option>Union/Work Dues</option></select></div><div class="form-row"><label>Amount (CAD)</label><input class="input" name="amount" required type="number" min=".01" step=".01"></div></div><div class="grid two-col"><div class="form-row"><label>Date</label><input class="input" name="date" type="date" value="${householdDate()}" required></div><div class="form-row"><label>Owner</label><select class="select" name="owner"><option>Partner A</option><option>Partner B</option><option>Joint</option></select></div></div><div class="form-row"><label>Receipt tag</label><input class="input" name="tag" placeholder="e.g. dental receipt"></div><div class="modal-actions"><button type="button" class="button" data-action="modal-close">Cancel</button><button class="button primary">Add receipt</button></div></form></section></div>`;
+    return `<div class="modal-backdrop" data-action="backdrop"><section class="modal"><div class="modal-head"><div><div class="eyebrow">Tax vault</div><h2>Add a tax-deductible receipt</h2></div><button class="modal-close" data-action="modal-close">×</button></div><form id="taxReceiptForm"><div class="form-row"><label>Merchant</label><input class="input" name="merchant" required></div><div class="grid two-col"><div class="form-row"><label>Category</label><select class="select" name="category"><option>Medical</option><option>Childcare</option><option>Donations</option><option>Union/Work Dues</option></select></div><div class="form-row"><label>Amount (CAD)</label><input class="input" name="amount" required type="number" min=".01" step=".01"></div></div><div class="grid two-col"><div class="form-row"><label>Date</label><input class="input" name="date" type="date" value="${householdDate()}" required></div><div class="form-row"><label>Owner</label><select class="select" name="owner"><option>Partner A</option><option>Partner B</option><option>Joint</option></select></div></div><div class="form-row"><label>Receipt tag</label><input class="input" name="tag" placeholder="e.g. dental receipt"></div><div class="modal-actions"><button type="button" class="button" data-action="modal-close">Cancel</button><button class="button primary">Add receipt</button></div></form></section></div>`;
   }
   if (modal === "debt-help") {
     const missingMinimums = metrics().missingMinimums.length > 0;
@@ -679,6 +749,17 @@ function bindPageEvents() {
   page.querySelectorAll("[data-edit-account]").forEach((button)=>button.addEventListener("click",()=>{modal={type:"account",id:button.dataset.editAccount};render();bindModalEvents();}));
   page.querySelectorAll("[data-edit-schedule]").forEach((button)=>button.addEventListener("click",()=>{modal={type:"schedule",id:button.dataset.editSchedule};render();bindModalEvents();}));
   page.querySelectorAll("[data-edit-transaction]").forEach((button)=>button.addEventListener("click",()=>{modal={type:"transaction",id:button.dataset.editTransaction};render();bindModalEvents();}));
+  page.querySelectorAll("[data-view-receipt]").forEach((button)=>button.addEventListener("click",()=>{modal={type:"receipt-view",id:button.dataset.viewReceipt};render();bindModalEvents();}));
+  page.querySelectorAll("[data-confirm-receipt]").forEach((button)=>button.addEventListener("click",async()=>{
+    const response=await fetch(`/api/receipts/${encodeURIComponent(button.dataset.confirmReceipt)}`,{
+      method:"PATCH",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({confirm:true,transactionId:button.dataset.matchTransaction})
+    });
+    const result=await response.json();
+    if(!response.ok){showToast(result.error||"Could not confirm this receipt match.");return;}
+    await loadState();
+    showToast(result.receipt.matchStatus==="matched"?"Receipt, ledger, and bank totals agree to the cent.":"Match saved as needs review. The amount difference is shown.");
+  }));
   page.querySelectorAll("[data-modal]").forEach((button)=>button.addEventListener("click",()=>{
     modal=button.dataset.modal;
     if(modal==="import")window.selectedCsv=null;
@@ -739,9 +820,25 @@ async function handleAction(event) {
   if (action === "budget") {modal="budget";render();bindModalEvents();}
   if (action === "account-add") {modal={type:"account"};render();bindModalEvents();}
   if (action === "transaction-add") {modal="transaction";render();bindModalEvents();}
-  if (action === "receipt-scan") {receiptDraft=null;modal="receipt-scan";render();bindModalEvents();}
-  if (action === "receipt-add-item") {receiptDraft=readReceiptDraft();receiptDraft.items.push({name:"",amount:0,bucket:"Essentials"});render();bindModalEvents();}
+  if (action === "receipt-scan" || action === "receipt-manual") {
+    const accounts=state.accounts.filter((account)=>account.kind==="cash"||account.kind==="liability");
+    const defaultAccount=accounts.find((account)=>account.owner===signedInUser&&account.kind==="cash")||accounts[0];
+    receiptAttachmentDraft=null;
+    receiptTotalTouched=false;
+    receiptDraft={merchant:"",date:householdDate(),receiptTotalCents:0,accountId:defaultAccount?.id||"",items:[]};
+    modal=action==="receipt-scan"?"receipt-scan":"receipt-entry";
+    render();bindModalEvents();
+  }
+  if (action === "receipt-add-item") {receiptDraft=readReceiptDraft();receiptDraft.items.push({name:"",quantity:1,unitPriceCents:0,lineTotalCents:0,category:"Groceries"});render();bindModalEvents();refreshReceiptTotals();}
   if (action === "receipt-save") await saveReceipt();
+  if (action === "receipt-delete") {
+    const receiptId=modal?.id;
+    if(!receiptId||!window.confirm("Remove this saved receipt and its itemized expense from the household books?"))return;
+    const response=await fetch(`/api/receipts/${encodeURIComponent(receiptId)}`,{method:"DELETE"});
+    const result=await response.json();
+    if(!response.ok){showToast(result.error||"Could not remove this receipt expense.");return;}
+    modal="";await loadState();showToast("Receipt expense removed.");
+  }
   if (action === "save-snowball") {
     const extra=Number(app.querySelector("#snowballExtra").value);
     if(!Number.isFinite(extra)||extra<0){showToast("Enter a non-negative monthly extra amount.");return;}
@@ -815,7 +912,7 @@ function bindModalEvents() {
     const total=[...app.querySelectorAll(".budget-input")].reduce((sum,item)=>sum+toCents(item.value),0);
     app.querySelector("#budgetTotal").textContent=`Total: ${fromCents(total)}%${total===10000?" ✓":" · targets must add up to 100%"}`;
   }));
-  app.querySelector("#receiptForm")?.addEventListener("submit",(event)=>{
+  app.querySelector("#taxReceiptForm")?.addEventListener("submit",(event)=>{
     event.preventDefault();const data=new FormData(event.currentTarget);
     state.taxDeductions.unshift({id:`tax-${Date.now()}`,merchant:data.get("merchant"),category:data.get("category"),amount:roundMoney(data.get("amount")),date:data.get("date"),owner:data.get("owner"),tag:data.get("tag")||"Receipt"});
     persist().then((saved)=>{if(!saved)return;modal="";render();showToast("Receipt added to your tax vault.");});
@@ -833,6 +930,9 @@ function bindModalEvents() {
   });
   app.querySelector("#receiptImage")?.addEventListener("change",scanReceiptImage);
   app.querySelector("#receiptSearch")?.addEventListener("input",(event)=>{receiptSearch=event.target.value;});
+  app.querySelector("#receiptForm")?.addEventListener("submit",async(event)=>{event.preventDefault();await saveReceipt();});
+  app.querySelectorAll("#receiptTotal,.receipt-item-quantity,.receipt-item-price").forEach((input)=>
+    input.addEventListener("input",()=>{if(input.id==="receiptTotal")receiptTotalTouched=true;refreshReceiptTotals();}));
   app.querySelectorAll("[data-remove-receipt-item]").forEach(button=>button.addEventListener("click",()=>{
     receiptDraft=readReceiptDraft();
     receiptDraft.items.splice(Number(button.dataset.removeReceiptItem),1);
@@ -840,23 +940,53 @@ function bindModalEvents() {
   }));
 }
 function readReceiptDraft() {
+  const items=[...app.querySelectorAll(".receipt-item-row")].map((row)=>{
+    const quantity=Number(row.querySelector(".receipt-item-quantity").value);
+    const unitPriceCents=toCents(row.querySelector(".receipt-item-price").value||0);
+    return {
+      name:row.querySelector(".receipt-item-name").value.trim(),
+      quantity,
+      unitPriceCents,
+      lineTotalCents:Number.isSafeInteger(quantity)&&quantity>0?quantity*unitPriceCents:0,
+      category:row.querySelector(".receipt-item-category").value
+    };
+  });
   return {
     merchant:app.querySelector("#receiptMerchant")?.value||"",
     date:app.querySelector("#receiptDate")?.value||"",
-    tax:roundMoney(app.querySelector("#receiptTax")?.value||0),
-    items:[...app.querySelectorAll(".receipt-item-row")].map(row=>({
-      name:row.querySelector(".receipt-item-name").value.trim(),
-      amount:roundMoney(row.querySelector(".receipt-item-amount").value||0),
-      bucket:row.querySelector(".receipt-item-bucket").value
-    }))
+    accountId:app.querySelector("#receiptAccount")?.value||"",
+    receiptTotalCents:toCents(app.querySelector("#receiptTotal")?.value||0),
+    items
   };
+}
+function refreshReceiptTotals() {
+  const items=[...app.querySelectorAll(".receipt-item-row")].map((row)=>{
+    const quantity=Number(row.querySelector(".receipt-item-quantity").value);
+    const unitPriceCents=toCents(row.querySelector(".receipt-item-price").value||0);
+    const cents=Number.isSafeInteger(quantity)&&quantity>0?quantity*unitPriceCents:0;
+    row.querySelector(".receipt-line-total").textContent=cad(fromCents(cents));
+    return cents;
+  });
+  const total=items.reduce((sum,cents)=>sum+cents,0);
+  const totalInput=app.querySelector("#receiptTotal");
+  if(totalInput&&modal==="receipt-entry"&&!receiptTotalTouched)totalInput.value=fromCents(total).toFixed(2);
+  const receiptTotal=toCents(totalInput?.value||0);
+  const difference=receiptTotal-total;
+  app.querySelector("#receiptItemsTotal").textContent=cad(fromCents(total));
+  app.querySelector("#receiptDifference").textContent=`Difference: ${cad(fromCents(difference))}`;
+  const validation=app.querySelector("#receiptValidation");
+  validation.classList.toggle("receipt-mismatch",difference!==0);
+  validation.textContent=difference===0
+    ?"Item total and receipt total agree."
+    :`Items ${difference>0?"are short":"exceed"} by ${cad(fromCents(Math.abs(difference)))}. Saving is blocked until they agree.`;
 }
 function parseReceiptText(text) {
   const lines=String(text||"").split(/\r?\n/).map(line=>line.replace(/\s+/g," ").trim()).filter(Boolean);
   const datePattern=/\b(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\b|\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})\b|\b(\d{1,2})\s+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*\s+(20\d{2})\b/i;
   let date=householdDate();
   let merchant="";
-  let tax=0;
+  let taxCents=0;
+  let receiptTotalCents=null;
   const items=[];
   for(const line of lines){
     const dateMatch=line.match(datePattern);
@@ -871,46 +1001,100 @@ function parseReceiptText(text) {
         if(check.getUTCFullYear()===candidateYear&&check.getUTCMonth()===candidateMonth-1&&check.getUTCDate()===candidateDay)date=candidate;
     }
     const amountMatch=line.match(/(?:\$?\s*)(\d{1,5}[.,]\d{2})\s*(?:[A-Z])?$/i);
-    const amount=amountMatch?Number(amountMatch[1].replace(",", ".")):null;
-    if(/\b(?:HST|GST|PST|TAX)\b/i.test(line)&&amount!==null){tax+=amount;continue;}
+    const amountCents=amountMatch?toCents(amountMatch[1].replace(",", ".")):null;
+    if(/\b(?:TOTAL|BALANCE DUE)\b/i.test(line)&&amountCents!==null){receiptTotalCents=amountCents;continue;}
+    if(/\b(?:HST|GST|PST|TAX)\b/i.test(line)&&amountCents!==null){taxCents+=amountCents;continue;}
     if(/\b(?:SUBTOTAL|TOTAL|BALANCE DUE|CHANGE|CASH|DEBIT|CREDIT|VISA|MASTERCARD|APPROVED|SAVINGS|ITEMS SOLD)\b/i.test(line))continue;
-    if(!merchant&&/[A-Z]{3}/i.test(line)&&amount===null&&!dateMatch)merchant=line.slice(0,80);
-    if(amount===null||amount<=0||!/[A-Z]/i.test(line))continue;
+    if(!merchant&&/[A-Z]{3}/i.test(line)&&amountCents===null&&!dateMatch)merchant=line.slice(0,80);
+    if(amountCents===null||amountCents<=0||!/[A-Z]/i.test(line))continue;
     const name=line.slice(0,amountMatch.index).replace(/^[\d\s.*#-]+/,"").replace(/\s+\d+\s*[xX]\s*$/,"").trim();
     if(name.length<2||/^(?:TOTAL|SUBTOTAL|TAX|HST|GST|PST)$/i.test(name))continue;
-    const bucket=/candy|chocolate|cookie|chips|soda|pop\b|ice cream|treat|snack/i.test(name)?"Fun / Wants":"Essentials";
-    items.push({name:name.slice(0,100),amount,bucket});
+    const category=/detergent|cleaner|disinfect|soap|paper towel|toilet paper/i.test(name)?"Housing & Utilities":"Groceries";
+    items.push({name:name.slice(0,100),quantity:1,unitPriceCents:amountCents,lineTotalCents:amountCents,category});
   }
-  return {merchant,date,tax,items};
+  if(taxCents>0)items.push({name:"Sales tax",quantity:1,unitPriceCents:taxCents,lineTotalCents:taxCents,category:items[0]?.category||"Groceries"});
+  const itemsTotalCents=items.reduce((sum,item)=>sum+item.lineTotalCents,0);
+  return {merchant,date,receiptTotalCents:receiptTotalCents??itemsTotalCents,items};
 }
 async function scanReceiptImage(event) {
   const file=event.target.files?.[0];
   if(!file)return;
   const status=app.querySelector("#receiptOcrStatus");
-  if(!file.type.startsWith("image/")||file.size>12_000_000){status.textContent="Choose an image under 12 MB.";return;}
-  if(!window.Tesseract?.recognize){status.textContent="On-device OCR did not load. Check your connection, then try again or add the receipt items manually.";return;}
-  status.textContent="Reading receipt on this device…";
+  if(!(file.type.startsWith("image/")||file.type==="application/pdf")||file.type==="image/svg+xml"||file.size>1_500_000){
+    status.textContent="Choose a photo or PDF no larger than 1.5 MB.";return;
+  }
+  status.textContent="Keeping the original file with this expense…";
   try{
+    const dataUrl=await new Promise((resolve,reject)=>{
+      const reader=new FileReader();
+      reader.onload=()=>resolve(String(reader.result));
+      reader.onerror=()=>reject(reader.error||new Error("Could not read the selected file."));
+      reader.readAsDataURL(file);
+    });
+    receiptAttachmentDraft={name:file.name,type:file.type,bytes:file.size,dataUrl,status:"Original receipt file is attached."};
+    if(file.type==="application/pdf"){
+      receiptAttachmentDraft.status="PDF attached. Add or correct its line items below; this browser reader scans photos, not PDF pages.";
+      render();bindModalEvents();return;
+    }
+    if(!window.Tesseract?.recognize){
+      receiptAttachmentDraft.status="Photo attached. On-device OCR did not load, so enter or correct the items manually.";
+      render();bindModalEvents();return;
+    }
+    status.textContent="Reading receipt on this device…";
     const result=await window.Tesseract.recognize(file,"eng",{logger:message=>{
       if(message.status==="recognizing text")status.textContent=`Reading receipt… ${Math.round((message.progress||0)*100)}%`;
     }});
-    receiptDraft=parseReceiptText(result.data.text);
+    const parsed=parseReceiptText(result.data.text);
+    receiptDraft={...readReceiptDraft(),...parsed,accountId:app.querySelector("#receiptAccount")?.value||receiptDraft?.accountId||""};
+    receiptTotalTouched=true;
+    receiptAttachmentDraft.status=receiptDraft.items.length
+      ?`Found ${receiptDraft.items.length} possible line items. Review and correct them before saving.`
+      :"Photo attached. Could not confidently find line items; enter them manually below.";
     render();bindModalEvents();
-    const resultStatus=app.querySelector("#receiptOcrStatus");
-    resultStatus.textContent=receiptDraft.items.length?`Found ${receiptDraft.items.length} possible items. Please review every field before saving.`:"Could not confidently find line items. Add them manually below.";
+    refreshReceiptTotals();
   }catch(error){
-    status.textContent="Could not read this photo. Try a brighter, flatter image or add items manually.";
+    status.textContent=`Could not read the file: ${error.message}`;
     console.error("Receipt OCR failed:",error);
   }
 }
 async function saveReceipt() {
   const receipt=readReceiptDraft();
+  const itemsTotalCents=receipt.items.reduce((sum,item)=>sum+item.lineTotalCents,0);
   if(!receipt.merchant.trim()){showToast("Enter the store name.");return;}
-  if(!receipt.date||Number.isNaN(new Date(`${receipt.date}T12:00:00`).getTime())){showToast("Enter a valid receipt date.");return;}
-  if(!receipt.items.length||receipt.items.some(item=>!item.name||!Number.isFinite(item.amount)||item.amount<0)){showToast("Add at least one valid receipt item.");return;}
-  state.groceryReceipts.unshift({id:`receipt-${Date.now()}`,merchant:receipt.merchant.trim(),date:receipt.date,tax:roundMoney(receipt.tax),items:receipt.items.map((item)=>({...item,amount:roundMoney(item.amount)}))});
-  if(!await persist())return;
-  receiptDraft=null;modal="";render();showToast(`${receipt.items.length} receipt item(s) saved to your grocery list.`);
+  if(!receipt.accountId){showToast("Choose a payment account.");return;}
+  if(!receipt.date||Number.isNaN(new Date(`${receipt.date}T12:00:00Z`).getTime())){showToast("Enter a valid receipt date.");return;}
+  if(!receipt.items.length||receipt.items.some(item=>!item.name||!Number.isSafeInteger(item.quantity)||item.quantity<1||!Number.isSafeInteger(item.unitPriceCents)||item.unitPriceCents<0)){
+    showToast("Add at least one valid item with a name, whole-number quantity, and price.");return;
+  }
+  if(!Number.isSafeInteger(receipt.receiptTotalCents)||receipt.receiptTotalCents<=0||itemsTotalCents!==receipt.receiptTotalCents){
+    refreshReceiptTotals();
+    const difference=receipt.receiptTotalCents-itemsTotalCents;
+    showToast(`Expense not saved. Items differ from the receipt by ${cad(fromCents(Math.abs(difference)))}.`);
+    return;
+  }
+  const account=state.accounts.find((item)=>item.id===receipt.accountId);
+  if(!account){showToast("The selected payment account is no longer available.");return;}
+  const payload={
+    merchant:receipt.merchant.trim(),
+    date:receipt.date,
+    accountId:account.id,
+    owner:account.owner,
+    receiptTotalCents:receipt.receiptTotalCents,
+    items:receipt.items,
+    ...(receiptAttachmentDraft?{attachment:{
+      name:receiptAttachmentDraft.name,
+      type:receiptAttachmentDraft.type,
+      dataUrl:receiptAttachmentDraft.dataUrl
+    }}:{})
+  };
+  try{
+    const response=await fetch("/api/receipts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+    const result=await response.json();
+    if(!response.ok){showToast(result.error||"Could not save this expense.");return;}
+    receiptDraft=null;receiptAttachmentDraft=null;modal="";
+    await loadState();
+    showToast(`${receipt.items.length} reviewed line item(s) and the expense were saved.`);
+  }catch(error){showToast(error.message||"Could not save this expense.");}
 }
 async function saveAccount(event) {
   event.preventDefault();
@@ -1014,7 +1198,6 @@ async function persist() {
       taxDeductions:state.taxDeductions,
       accounts:state.accounts,
       transactions:state.transactions,
-      groceryReceipts:state.groceryReceipts,
       debtPlanExtraMonthly:state.debtPlanExtraMonthly
     })});
     const result=await response.json();
