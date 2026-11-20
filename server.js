@@ -28,11 +28,50 @@ function ensureDataFile() {
 }
 
 function readData() {
-  return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+  const data = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+  normalizeMoneyState(data);
+  return data;
 }
 
 function writeData(data) {
+  normalizeMoneyState(data);
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+}
+
+function moneyCents(value) {
+  const match = String(value ?? "0").trim().match(/^(-?)(\d+)(?:\.(\d*))?$/);
+  if (!match) return Math.round((Number(value) || 0) * 100);
+  const fraction = (match[3] || "").padEnd(3, "0");
+  return (match[1] === "-" ? -1 : 1) * (Number(match[2]) * 100 + Number(fraction.slice(0, 2)) + (Number(fraction[2]) >= 5 ? 1 : 0));
+}
+
+function normalizeMoneyState(state) {
+  const addCents = (record, key) => {
+    if (record[key] !== undefined && record[key] !== null) {
+      record[key] = moneyCents(record[key]) / 100;
+      record[`${key}Cents`] = moneyCents(record[key]);
+    }
+  };
+  (state.accounts || []).forEach((account) => {
+    ["balance", "startingBalance", "minimumPayment", "monthlyPayment", "limit", "acb"].forEach((key) => addCents(account, key));
+    if (account.apr !== undefined && account.apr !== null) account.apr = Number(account.apr).toFixed(2);
+  });
+  (state.transactions || []).forEach((transaction) => {
+    addCents(transaction, "amount");
+    (transaction.splits || []).forEach((split) => addCents(split, "amount"));
+  });
+  (state.schedule || []).forEach((item) => {
+    addCents(item, "amount");
+    addCents(item, "grossAmount");
+  });
+  (state.taxDeductions || []).forEach((item) => addCents(item, "amount"));
+  (state.groceryReceipts || []).forEach((receipt) => {
+    addCents(receipt, "tax");
+    (receipt.items || []).forEach((item) => addCents(item, "amount"));
+  });
+  (state.history || []).forEach((item) => addCents(item, "netWorth"));
+  addCents(state, "debtPlanExtraMonthly");
+  return state;
 }
 
 function send(res, status, value, type = "application/json; charset=utf-8") {
@@ -291,30 +330,47 @@ async function syncPlaidItems(items) {
   return { imported, state };
 }
 
-function answerQuestion(question) {
+function answerQuestion(question, requestedView, requestedJointShare) {
   const state = readData();
-  const assets = state.accounts.filter((a) => a.kind !== "liability").reduce((sum, a) => sum + a.balance, 0);
-  const debt = state.accounts.filter((a) => a.kind === "liability").reduce((sum, a) => sum + a.balance, 0);
-  const tx = state.transactions.filter((t) => t.status === "Actual");
-  const income = tx.filter((t) => t.type === "income").reduce((sum, t) => sum + t.amount, 0);
-  const expenses = tx.filter((t) => t.type === "expense").reduce((sum, t) => sum + t.amount, 0);
-  const savings = income ? Math.max(0, (income - expenses) / income) : 0;
+  const view = ["Partner A Only", "Partner B Only"].includes(requestedView) ? requestedView : "Combined Household";
+  const jointShare = Math.max(0, Math.min(100, Number(requestedJointShare) || 0));
+  const factor = (owner) => view === "Combined Household" ? 1 :
+    owner === view.replace(" Only", "") ? 1 : owner === "Joint" ? jointShare / 100 : 0;
+  const cents = (value) => Math.round((Number(value) || 0) * 100);
+  const totalCents = (records, value) => records.reduce((sum, record) => sum + Math.round(cents(value(record)) * factor(record.owner)), 0);
+  const fmt = (valueCents) => money(valueCents / 100);
+  const accounts = state.accounts.filter((account) => factor(account.owner) > 0);
+  const transactions = state.transactions.filter((transaction) => transaction.status === "Actual" && factor(transaction.owner) > 0);
+  const incomeCents = totalCents(transactions.filter((transaction) => transaction.type === "income"), (transaction) => transaction.amount);
+  const expenseCents = totalCents(transactions.filter((transaction) => transaction.type === "expense"), (transaction) => transaction.amount);
+  const netCents = incomeCents - expenseCents;
+  const savings = incomeCents ? Math.max(0, netCents / incomeCents) : 0;
   const q = question.toLowerCase();
-  if (/debt|pay.?off|loan/.test(q)) {
-    const high = state.accounts.filter((a) => a.kind === "liability").sort((a, b) => b.apr - a.apr)[0];
-    return `Your tracked liabilities total ${money(debt)}. ${high ? `${high.name} has the highest listed rate at ${high.apr}%, so extra payments there generally reduce interest fastest—while keeping a cash buffer for near-term bills.` : "Add a debt account with its interest rate to compare payoff options."}`;
+  const viewLabel = view === "Combined Household" ? view : `${view} (joint share ${jointShare}%)`;
+  const transactionSources = (records) => records.length ? records.map((transaction) => `${transaction.id} ${fmt(Math.round(cents(transaction.amount) * factor(transaction.owner)))}`).join(", ") : "none";
+  const accountSources = (records) => records.length ? records.map((account) => `${account.id} ${fmt(Math.round(cents(account.balance) * factor(account.owner)))}`).join(", ") : "none";
+  if (/cash flow|cashflow|spend|expense/.test(q)) {
+    return `In ${viewLabel}, recorded income is ${fmt(incomeCents)} and spending is ${fmt(expenseCents)}. Net cash flow = income − spending = ${fmt(incomeCents)} − ${fmt(expenseCents)} = ${fmt(netCents)}. Transfers are excluded. Show your work: actual income transaction IDs and amounts: ${transactionSources(transactions.filter((transaction) => transaction.type === "income"))}; actual expense transaction IDs and amounts: ${transactionSources(transactions.filter((transaction) => transaction.type === "expense"))}.`;
   }
-  if (/spend|expense|cash flow|cashflow/.test(q)) {
-    return `Your recorded actuals show ${money(income)} in income and ${money(expenses)} in categorized expenses. Internal transfers and debt repayments are excluded from expenses, so this view reflects purchases rather than moving money between your own accounts.`;
+  if (/debt|pay.?off|loan/.test(q)) {
+    const debts = accounts.filter((account) => account.kind === "liability");
+    const debtCents = totalCents(debts, (account) => account.balance);
+    const high = debts.slice().sort((a, b) => Number(b.apr) - Number(a.apr))[0];
+    return `In ${viewLabel}, tracked debt totals ${fmt(debtCents)}${high ? `. ${high.name} (${high.id}) has the highest listed rate at ${Number(high.apr || 0).toFixed(2)}%` : ""}. Show your work: ${debts.map((account) => `${account.id} ${fmt(Math.round(cents(account.balance) * factor(account.owner)))}`).join(" + ") || "no debt accounts"} = ${fmt(debtCents)}. Pay required minimums first; the highest-rate suggestion is a comparison, not a payoff instruction.`;
   }
   if (/save|savings|invest/.test(q)) {
-    return `Based on the currently recorded actuals, your savings rate is ${(savings * 100).toFixed(1)}%. This estimate is income less categorized expenses divided by income; investments and debt payments are tracked separately and should be considered when you set your monthly targets.`;
+    const relevant = transactions.filter((transaction) => ["income", "expense"].includes(transaction.type));
+    return `In ${viewLabel}, income is ${fmt(incomeCents)}, spending is ${fmt(expenseCents)}, and net is ${fmt(netCents)}. Savings-rate estimate = net ÷ income = ${fmt(netCents)} ÷ ${fmt(incomeCents)} = ${(savings * 100).toFixed(1)}%. Show your work: transaction IDs and amounts: ${transactionSources(relevant)}.`;
   }
-  return `Your household currently tracks ${money(assets)} in assets, ${money(debt)} in liabilities, and ${money(assets - debt)} in net worth. I use only verified records in the household ledger. Ask about cash flow, spending, savings, or debt trade-offs for a more specific summary.`;
+  const assetAccounts = accounts.filter((account) => account.kind !== "liability");
+  const debts = accounts.filter((account) => account.kind === "liability");
+  const assetsCents = totalCents(assetAccounts, (account) => account.balance);
+  const debtCents = totalCents(debts, (account) => account.balance);
+  return `In ${viewLabel}, assets are ${fmt(assetsCents)}, liabilities are ${fmt(debtCents)}, and net worth is ${fmt(assetsCents)} − ${fmt(debtCents)} = ${fmt(assetsCents - debtCents)}. Show your work: asset account IDs and amounts: ${accountSources(assetAccounts)}; liability account IDs and amounts: ${accountSources(debts)}.`;
 }
 
 function money(value) {
-  return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 }).format(value);
+  return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.round((Number(value) || 0) * 100) / 100);
 }
 
 const server = http.createServer(async (req, res) => {
@@ -370,6 +426,10 @@ const server = http.createServer(async (req, res) => {
         if (Array.isArray(update.merchantRules)) state.merchantRules = update.merchantRules.slice(0, 1000);
         if (Array.isArray(update.taxDeductions)) state.taxDeductions = update.taxDeductions.slice(0, 5000);
         if (Array.isArray(update.accounts)) {
+          if (update.accounts.some((account) => account.accountType === "Credit card" &&
+            (account.minimumPayment === undefined || account.minimumPayment === null || account.minimumPayment === ""))) {
+            return send(res, 400, { error: "Credit card accounts require a minimum monthly payment." });
+          }
           const validAccounts = new Set(update.accounts.map((account) => account.id));
           if (update.accounts.length > 500 || update.accounts.some((account) =>
             !account.id || !String(account.name || "").trim() ||
@@ -496,8 +556,11 @@ const server = http.createServer(async (req, res) => {
         return send(res, 200, { state });
       }
       if (req.method === "POST" && url.pathname === "/api/ask") {
-        const { question } = await body(req);
-        return send(res, 200, { answer: answerQuestion(String(question || "").slice(0, 1000)) });
+        const { question, view, jointShare } = await body(req);
+        return send(res, 200, { answer: answerQuestion(String(question || "").slice(0, 1000), view, jointShare) });
+      }
+      if (req.method === "GET" && url.pathname === "/api/plaid/status") {
+        return send(res, 200, { configured: Boolean(process.env.PLAID_CLIENT_ID && process.env.PLAID_SECRET) });
       }
       if (req.method === "POST" && url.pathname === "/api/plaid/link-token") {
         if (!process.env.PLAID_CLIENT_ID || !process.env.PLAID_SECRET) {

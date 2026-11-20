@@ -44,6 +44,14 @@ It also continues to work as a normal website on desktop and mobile browsers.
 - The Q&A assistant is a deterministic summary of verified household ledger data; it does not send financial data to an external AI service.
 - The local Node server has optional Plaid Link endpoints; the Vercel adapter currently directs users to CSV import instead.
 
+## Phase 1 accuracy notes
+
+- The app reports bank sync as not connected unless the server has Plaid credentials configured. CSV import remains available; the account manager is separate from the Plaid connection dialog.
+- Household date defaults use the `America/Edmonton` time zone.
+- Money inputs and stored household records are rounded to integer cents, and CAD amounts display two decimal places. Interest rates are normalized to fixed two-decimal strings.
+- The chat answers from the selected household view and includes the totals, calculations, and record IDs used.
+- Monthly plan actuals are month-to-date; targets use full-month equivalents and a projected month-end amount.
+
 Expected paydays and bills remain separate from actual balances. The app includes the 55/5/10/15/15 budget split, transaction routing, reconciliation, debt and investment views, and tax receipt export.
 
 ## Debt plan, manual entries, and grocery receipts
