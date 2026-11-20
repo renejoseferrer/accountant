@@ -239,6 +239,7 @@ tr:last-child td { border-bottom:0; }
 .receipt-card-total { display:grid; gap:7px; padding-top:8px; }
 .receipt-card-actions { display:flex; flex-wrap:wrap; gap:7px; margin-top:10px; }
 .receipt-modal { width:min(680px,100%); }
+.item-split-line { display:grid; grid-template-columns:minmax(0,1.2fr) auto minmax(140px,.9fr); gap:8px; align-items:center; margin-bottom:8px; }
 .ratio-callout { display:flex; align-items:center; gap:8px; }
 .modal-backdrop { position:fixed; inset:0; background:#14241b70; z-index:30; display:grid; place-items:center; padding:20px; }
 .modal { width:min(520px,100%); background:#fff; border-radius:17px; box-shadow:0 28px 90px #10221840; padding:22px; max-height:90vh; overflow:auto; }

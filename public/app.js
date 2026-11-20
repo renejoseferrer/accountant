@@ -185,7 +185,7 @@ function metrics() {
   const liquid = amount(accounts.filter((a) => a.kind === "cash"));
   const investments = amount(accounts.filter((a) => a.kind === "investment"));
   const debt = amount(accounts.filter((a) => a.kind === "liability"));
-  const tx = visibleTransactions().filter((t) => t.status === "Actual");
+  const tx = visibleTransactions().filter((t) => t.status === "Actual" && HouseholdMath.countsTowardSpending(t));
   const ledger = HouseholdMath.calculateLedger(state, view, jointShare);
   const income = fromCents(ledger.incomeCents);
   const expenses = fromCents(ledger.expenseCents);
@@ -280,9 +280,12 @@ function ownerBreakdown() {
 function transactionRow(t) {
   const signed = t.type === "income" ? "+" : t.type === "expense" ? "−" : "";
   const badge = t.type === "transfer" ? `<span class="pill">${esc(t.category === "Debt repayment" ? "Debt repayment · neutral" : t.category === "Investment contribution" ? "Investment · neutral" : t.category === "General savings" ? "General savings · neutral" : "Internal transfer · neutral")}</span>` : t.type === "income" ? `<span class="pill green">Income</span>` : Array.isArray(t.splits) && t.splits.length ? `<span class="pill">${esc(t.splits.map((split)=>split.category).join(" + "))}</span>` : `<span class="pill">${esc(t.category)}</span>`;
-  const receiptAction = t.receiptId ? `<button class="table-action" data-view-receipt="${esc(t.receiptId)}">Items / proof</button>` : "";
-  const review = t.matchStatus === "needs review" ? `<span class="pill amber">Needs review</span>` : "";
-  return `<tr><td data-label="Date">${dateLabel(t.date)}</td><td data-label="Merchant"><div class="merchant-cell"><span class="merchant-icon">${esc(iconFor(t.merchant))}</span><span>${esc(t.merchant)}${t.mcc ? `<small class="muted" style="display:block;font-weight:400;margin-top:3px">MCC ${esc(t.mcc)}</small>` : ""}</span></div></td><td data-label="Category">${badge} ${review}</td><td data-label="Owner">${esc(t.owner)}</td><td data-label="Account">${esc(t.account)}</td><td data-label="Amount" class="amount">${signed}${cad(t.shownAmount ?? t.amount, 2)}</td><td data-label="Actions">${t.manual?`<button class="table-action" data-edit-transaction="${esc(t.id)}">Edit</button>`:""}${receiptAction}<button class="table-action" data-split="${esc(t.id)}">Split</button></td></tr>`;
+  const linkedReceipt = receiptForTransaction(t);
+  const receiptAction = linkedReceipt ? `<button class="table-action" type="button" data-view-receipt="${esc(linkedReceipt.id)}">Items / proof</button>` : "";
+  const agreement = linkedReceipt ? expenseAgreement(linkedReceipt) : null;
+  const review = agreement?.status === "needs review" ? `<span class="pill amber">Needs review</span>` : t.receiptMatchRole === "bank-record" ? `<span class="pill">Linked bank record</span>` : "";
+  const importRemove = t.note === "CSV import" ? `<button type="button" class="table-action" data-action="import-delete" data-transaction-id="${esc(t.id)}">Remove import</button>` : "";
+  return `<tr><td data-label="Date">${dateLabel(t.date)}</td><td data-label="Merchant"><div class="merchant-cell"><span class="merchant-icon">${esc(iconFor(t.merchant))}</span><span>${esc(t.merchant)}${t.mcc ? `<small class="muted" style="display:block;font-weight:400;margin-top:3px">MCC ${esc(t.mcc)}</small>` : ""}</span></div></td><td data-label="Category">${badge} ${review}</td><td data-label="Owner">${esc(t.owner)}</td><td data-label="Account">${esc(t.account)}</td><td data-label="Amount" class="amount">${signed}${cad(t.shownAmount ?? t.amount, 2)}</td><td data-label="Actions">${t.manual?`<button type="button" class="table-action" data-edit-transaction="${esc(t.id)}">Edit</button>`:""}${receiptAction}<button type="button" class="table-action" data-split="${esc(t.id)}">Split</button>${importRemove}</td></tr>`;
 }
 function recentTransactions(limit = 5, filter = () => true) {
   const rows = visibleTransactions().filter(filter).slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, limit);
@@ -316,7 +319,7 @@ function budgetMarkup() {
   const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
   const elapsedDays = now.getUTCDate();
   const monthLabel = new Intl.DateTimeFormat("en-CA", { timeZone: "UTC", month: "short" }).format(now);
-  const actuals = visibleTransactions().filter((transaction) => transaction.status === "Actual" &&
+  const actuals = visibleTransactions().filter((transaction) => transaction.status === "Actual" && HouseholdMath.countsTowardSpending(transaction) &&
     transaction.date >= `${year}-${String(month + 1).padStart(2, "0")}-01` && transaction.date <= householdDate());
   const sharedCents = (transaction) => HouseholdMath.shareCents(amountCents(transaction, "amount"), transaction.owner, view, jointShare);
   const expenseCents = actuals.filter((transaction) => transaction.type === "expense")
@@ -496,16 +499,57 @@ function receiptCandidate(receipt, transaction) {
   return String(receipt.merchant || "").toLowerCase().split(/[^a-z0-9]+/)
     .some((word) => word.length >= 4 && String(transaction.merchant || "").toLowerCase().includes(word));
 }
+function receiptForTransaction(transaction) {
+  return (state.groceryReceipts || []).find((receipt) =>
+    receipt.id === transaction?.receiptId || receipt.expenseTransactionId === transaction?.id);
+}
+function expenseAgreement(receipt) {
+  const receiptCents = Number(receipt.receiptTotalCents ?? receipt.expenseTotalCents ?? 0);
+  const ledger = state.transactions.find((item) => item.id === receipt.expenseTransactionId);
+  const ledgerCents = ledger ? amountCents(ledger, "amount") : Number(receipt.ledgerTotalCents ?? receipt.expenseTotalCents ?? receiptCents);
+  const bank = receipt.matchedTransactionId ? state.transactions.find((item) => item.id === receipt.matchedTransactionId) : null;
+  if (!bank) return { status: "waiting", label: "Waiting for a bank match", receiptCents, ledgerCents, bankCents: null, lines: [] };
+  const bankCents = amountCents(bank, "amount");
+  const lines = [];
+  const differ = (left, leftCents, right, rightCents) => {
+    if (leftCents === rightCents) return;
+    lines.push(`${left} ${cad(fromCents(leftCents))} and ${right} ${cad(fromCents(rightCents))} differ by ${cad(fromCents(Math.abs(rightCents - leftCents)))}`);
+  };
+  differ("Receipt", receiptCents, "Ledger", ledgerCents);
+  differ("Receipt", receiptCents, "Bank", bankCents);
+  differ("Ledger", ledgerCents, "Bank", bankCents);
+  return lines.length
+    ? { status: "needs review", label: "Needs review", receiptCents, ledgerCents, bankCents, lines }
+    : { status: "matched", label: "Matched — all three totals agree", receiptCents, ledgerCents, bankCents, lines };
+}
+function agreementMarkup(receipt) {
+  const agreement = expenseAgreement(receipt);
+  const numbers = `<div class="receipt-check-numbers"><span>Receipt: ${cad(fromCents(agreement.receiptCents))}</span><span>Ledger: ${cad(fromCents(agreement.ledgerCents))}</span><span>Bank: ${agreement.bankCents == null ? "not matched" : cad(fromCents(agreement.bankCents))}</span></div>`;
+  if (agreement.status === "waiting") return `${numbers}<div class="notice">Waiting for a bank match. This is not a mismatch.</div>`;
+  if (agreement.status === "matched") return `${numbers}<div class="notice">Matched — all three totals agree.</div>`;
+  return `${numbers}<div class="notice receipt-mismatch"><strong>Needs review.</strong> ${agreement.lines.map(esc).join(" ")}</div>`;
+}
+function unmatchedBankTransactions() {
+  return state.transactions.filter((transaction) =>
+    transaction.type === "expense" && transaction.status !== "Superseded" && transaction.source !== "receipt" &&
+    !transaction.receiptId && (transaction.bankImported || transaction.note === "CSV import" || transaction.note === "Bank sync"));
+}
 function receiptSuggestions() {
   return (state.groceryReceipts || []).flatMap((receipt) => {
     if (receipt.matchedTransactionId) return [];
-    return state.transactions.filter((transaction) =>
-      transaction.status === "Actual" && transaction.type === "expense" &&
-      transaction.source !== "receipt" &&
-      (transaction.bankImported || transaction.note === "CSV import" || transaction.note === "Bank sync") &&
-      !transaction.receiptId && receiptCandidate(receipt, transaction)
+    const receiptCents = Number(receipt.receiptTotalCents ?? receipt.expenseTotalCents ?? 0);
+    return unmatchedBankTransactions().filter((transaction) =>
+      !(receipt.rejectedTransactionIds || []).includes(transaction.id) &&
+      !(transaction.rejectedReceiptIds || []).includes(receipt.id) &&
+      receiptCandidate(receipt, transaction) &&
+      amountCents(transaction, "amount") === receiptCents
     ).map((transaction) => ({ receipt, transaction }));
   });
+}
+function suggestionCard({ receipt, transaction }) {
+  const receiptCents = Number(receipt.receiptTotalCents ?? receipt.expenseTotalCents ?? 0);
+  const bankCents = amountCents(transaction, "amount");
+  return `<article class="receipt-card"><div class="receipt-card-head"><strong>${esc(receipt.merchant)} · ${dateLabel(receipt.date)} · ${cad(fromCents(receiptCents))}</strong><span class="pill amber">Suggested · not matched</span></div><div class="receipt-check-numbers"><span>Receipt store: ${esc(receipt.merchant)}</span><span>Bank store: ${esc(transaction.merchant)}</span><span>Bank date: ${dateLabel(transaction.date)}</span><span>Bank amount: ${cad(fromCents(bankCents))}</span></div><p class="muted">Amount, date, and store match. Nothing is linked until you confirm.</p><div class="receipt-card-actions"><button type="button" class="button small primary" data-action="receipt-confirm" data-receipt-id="${esc(receipt.id)}" data-transaction-id="${esc(transaction.id)}">Confirm</button><button type="button" class="button small" data-action="receipt-reject" data-receipt-id="${esc(receipt.id)}" data-transaction-id="${esc(transaction.id)}">Reject</button></div></article>`;
 }
 function babyStepsScreen() {
   const m=metrics();
@@ -528,22 +572,18 @@ function babyStepsScreen() {
     !receiptSearch||`${receipt.merchant} ${(receipt.items||[]).map((item)=>item.name).join(" ")}`.toLowerCase().includes(receiptSearch.toLowerCase())
   ).sort((a,b)=>(b.date||"").localeCompare(a.date||""));
   const suggestions=receiptSuggestions();
-  const suggestionMarkup=suggestions.length?`<section class="card section-card"><div class="section-title-row"><div><h2>Possible bank matches</h2><p class="muted" style="font-size:11px;margin:5px 0 0">Check the store and date. Nothing is linked until you confirm.</p></div></div>${suggestions.map(({receipt,transaction})=>{
-    const receiptCents=Number(receipt.receiptTotalCents??receipt.expenseTotalCents??0);
-    const bankCents=amountCents(transaction,"amount");
-    const difference=bankCents-receiptCents;
-    return `<article class="receipt-card"><div class="receipt-card-head"><strong>${esc(receipt.merchant)} · ${dateLabel(receipt.date)}</strong><span class="pill amber">Suggested · not matched</span></div><div class="receipt-check-numbers"><span>Receipt: ${cad(fromCents(receiptCents))}</span><span>Bank: ${cad(fromCents(bankCents))}</span><span>Difference: ${cad(fromCents(difference))}</span></div><p class="muted">${esc(transaction.merchant)} · ${dateLabel(transaction.date)} · ${esc(transaction.account||"Imported account")}</p><button class="button small primary" data-confirm-receipt="${esc(receipt.id)}" data-match-transaction="${esc(transaction.id)}">Confirm this match</button></article>`;
-  }).join("")}</section>`:"";
+  const reviewReceipts=(state.groceryReceipts||[]).filter((receipt)=>expenseAgreement(receipt).status==="needs review");
+  const suggestionMarkup=`<section class="card section-card" id="receiptSuggestions"><div class="section-title-row"><div><h2>Suggested receipt matches</h2><p class="muted" style="font-size:11px;margin:5px 0 0">Imported bank rows that match a saved receipt on amount, date, and store. Nothing is linked until you press Confirm. Reject only hides the suggestion.</p></div><span class="pill">${suggestions.length} suggested</span></div>${suggestions.length?suggestions.map(suggestionCard).join(""):`<div class="empty-state">No unmatched imported transaction currently matches a saved receipt on amount, date, and store.</div>`}</section>`;
+  const reviewMarkup=`<section class="card section-card" id="needsReviewList"><div class="section-title-row"><div><h2>Needs review</h2><p class="muted" style="font-size:11px;margin:5px 0 0">Receipt, ledger, and bank totals that do not agree to the cent.</p></div><span class="pill ${reviewReceipts.length?"amber":"green"}">Needs review: ${reviewReceipts.length}</span></div>${reviewReceipts.length?reviewReceipts.map((receipt)=>`<article class="receipt-card"><div class="receipt-card-head"><strong>${esc(receipt.merchant)} · ${dateLabel(receipt.date)}</strong><span class="pill amber">Needs review</span></div>${agreementMarkup(receipt)}<button type="button" class="button small" data-view-receipt="${esc(receipt.id)}">Open expense</button></article>`).join(""):`<div class="empty-state">No expenses need review.</div>`}</section>`;
   const receiptMarkup=filteredReceipts.length?filteredReceipts.map((receipt)=>{
-    const totalCents=Number(receipt.receiptTotalCents??receipt.expenseTotalCents??0);
-    const bankCents=Number(receipt.bankAmountCents);
-    const status=receipt.matchStatus==="matched"?`<span class="pill green">Matched · amounts agree</span>`:receipt.matchStatus==="needs review"?`<span class="pill red">Needs review · ${cad(fromCents(receipt.differenceCents||0))} difference</span>`:`<span class="pill amber">Not matched</span>`;
+    const agreement=expenseAgreement(receipt);
+    const status=agreement.status==="matched"?`<span class="pill green">${esc(agreement.label)}</span>`:agreement.status==="needs review"?`<span class="pill amber">Needs review</span>`:`<span class="pill">Waiting for a bank match</span>`;
     const items=(receipt.items||[]).map((item)=>`<li><span>${esc(item.name)} · ${Number(item.quantity||1)} × ${cad(fromCents(Number(item.unitPriceCents??receiptItemCents(item))))} · ${esc(item.category||item.bucket||"Uncategorized")}</span><strong>${cad(fromCents(receiptItemCents(item)))}</strong></li>`).join("");
-    const agreement=receipt.matchedTransactionId?`<div class="receipt-check-numbers"><span>Receipt: ${cad(fromCents(totalCents))}</span><span>Ledger: ${cad(fromCents(Number(receipt.ledgerTotalCents??bankCents)))}</span><span>Bank: ${cad(fromCents(bankCents))}</span></div>`:`<p class="muted">Receipt and ledger total: ${cad(fromCents(totalCents))} · Waiting for a bank match.</p>`;
-    return `<article class="receipt-card"><div class="receipt-card-head"><div><strong>${esc(receipt.merchant)}</strong><div class="muted">${dateLabel(receipt.date)} · ${esc(receipt.owner||"Household")} · ${esc(state.accounts.find((account)=>account.id===receipt.accountId)?.name||"Payment account")}</div></div>${status}</div><ul class="receipt-item-list">${items}</ul><div class="receipt-card-total"><strong>Receipt total ${cad(fromCents(totalCents))}</strong>${agreement}</div><div class="receipt-card-actions"><button class="button small" data-view-receipt="${esc(receipt.id)}">View expense details</button>${receipt.hasAttachment?`<a class="button small" href="/api/receipts/${encodeURIComponent(receipt.id)}/file" target="_blank" rel="noopener">Open original ${receipt.attachmentType==="application/pdf"?"PDF":"photo"}</a>`:'<span class="muted">No receipt file attached</span>'}</div></article>`;
+    return `<article class="receipt-card"><div class="receipt-card-head"><div><strong>${esc(receipt.merchant)}</strong><div class="muted">${dateLabel(receipt.date)} · ${esc(receipt.owner||"Household")} · ${esc(state.accounts.find((account)=>account.id===receipt.accountId)?.name||"Payment account")}</div></div>${status}</div><ul class="receipt-item-list">${items}</ul><div class="receipt-card-total"><strong>Receipt total ${cad(fromCents(agreement.receiptCents))}</strong>${agreementMarkup(receipt)}</div><div class="receipt-card-actions"><button type="button" class="button small" data-view-receipt="${esc(receipt.id)}">View expense details</button>${receipt.hasAttachment?`<a class="button small" href="/api/receipts/${encodeURIComponent(receipt.id)}/file" target="_blank" rel="noopener">Open original ${receipt.attachmentType==="application/pdf"?"PDF":"photo"}</a>`:'<span class="muted">No receipt file attached</span>'}</div></article>`;
   }).join(""):`<div class="empty-state">${receipts.length?"No saved expenses match your search.":"No itemized expenses yet. Add one by hand or upload a receipt photo."}</div>`;
   return `${pageHeading("Simple steps, one household plan","Baby Steps & itemized expenses","Keep receipt proof and reviewed line items with each household expense.",`<button class="button" data-action="receipt-manual">+ Add expense by hand</button><button class="button primary" data-action="receipt-scan">＋ Upload / take receipt photo</button>`)}
     ${sectionCard("Your Baby Steps",`Current focus: Step ${currentStep} · based on balances you’ve entered`,`${steps.map((step,index)=>{const number=index+1;const active=number===currentStep;const complete=number<currentStep;const progress=Math.min(100,Math.max(0,step[3]?step[2]/step[3]*100:0));return `<div class="baby-step ${active?"active":""} ${complete?"complete":""}"><span class="step-number">${complete?"✓":number}</span><div class="step-copy"><strong>${esc(step[0])}</strong><p>${esc(step[1])}</p><div class="progress"><span style="width:${progress}%"></span></div><small>${number===2?`${cad(nonMortgageDebt)} non-mortgage debt remains`:number===1?`${cad(starter)} of ${cad(1000)} starter cushion`:number===3?`${cad(fullFund)} of ${cad(fullFundTarget)} full-fund target`:`${cad(m.invested)} recorded investment contributions · target guide ${cad(step[3])}`}</small><span class="pill">${esc(step[4])}</span></div></div>`}).join("")}<div class="notice">A simple adaptation of Dave Ramsey’s Baby Steps for your household plan—not financial advice. The 15% savings bucket builds your emergency cushion; the 15% investments bucket supports long-term wealth. During the debt step, use the 10% debt bucket plus any planned snowball extra. When non-mortgage debt is cleared, consider rolling that payment into wealth building.</div>`)}
+    ${reviewMarkup}
     ${suggestionMarkup}
     ${sectionCard("Itemized expenses & receipt proof","Each line item is categorized separately. An imported bank transaction is only linked after you confirm it.",`<div class="filter-row"><input class="input search-input" id="receiptSearch" placeholder="Search store or item…" value="${esc(receiptSearch)}"><button class="button small" data-action="receipt-manual">Add by hand</button><button class="button small" data-action="receipt-scan">Upload / take photo</button></div>${receiptMarkup}`)}`;
 }
@@ -581,9 +621,16 @@ function modalMarkup() {
   if (modal && modal.type === "split") {
     const transaction = state.transactions.find((t) => t.id === modal.splitId);
     if (!transaction) return "";
+    const receipt = receiptForTransaction(transaction);
+    const categories = ["Groceries","Housing & Utilities","Dining","Transit & Fuel","Childcare","Medical","Shopping","Subscriptions","Other"];
+    if (receipt?.items?.length) {
+      const itemTotal = receipt.items.reduce((total, item) => total + receiptItemCents(item), 0);
+      const transactionCents = amountCents(transaction, "amount");
+      return `<div class="modal-backdrop" data-action="backdrop"><section class="modal"><div class="modal-head"><div><div class="eyebrow">Line items</div><h2>Split this receipt by item</h2><p class="subtitle" style="margin-top:6px">${esc(transaction.merchant)} · ${cad(transaction.amount,2)}</p></div><button type="button" class="modal-close" data-action="modal-close">×</button></div><p class="muted">Each item keeps its own amount. Choose a category for each item. The item total must equal the expense total.</p><div id="splitLines">${receipt.items.map((item, index) => `<div class="split-line item-split-line"><span>${esc(item.name)}</span><strong>${cad(fromCents(receiptItemCents(item)))}</strong><select class="select split-item-category" data-index="${index}">${categories.map((category)=>`<option value="${esc(category)}" ${(item.category||"Groceries")===category?"selected":""}>${category}</option>`).join("")}</select></div>`).join("")}</div><div class="notice ${itemTotal===transactionCents?"":"receipt-mismatch"}" id="splitTotal">Item total: ${cad(fromCents(itemTotal))} · Expense total: ${cad(fromCents(transactionCents))}${itemTotal===transactionCents?"":` · Difference: ${cad(fromCents(transactionCents-itemTotal))}`}</div><div class="modal-actions"><button type="button" class="button" data-action="modal-close">Cancel</button><button type="button" class="button primary" data-action="split-save">Save item categories</button></div></section></div>`;
+    }
     const lines = modal.lines || [{ category: transaction.category, amount: transaction.amount }, { category: "Household", amount: 0 }];
     const splitTotal = sumMoney(lines.map((line) => line.amount));
-    return `<div class="modal-backdrop" data-action="backdrop"><section class="modal"><div class="modal-head"><div><div class="eyebrow">Transaction details</div><h2>Split this transaction</h2><p class="subtitle" style="margin-top:6px">${esc(transaction.merchant)} · ${cad(transaction.amount,2)}</p></div><button class="modal-close" data-action="modal-close">×</button></div><div id="splitLines">${lines.map((line, index) => `<div class="split-line"><select class="select split-category" data-index="${index}">${["Groceries","Dining","Housing & Utilities","Transit & Fuel","Subscriptions","Childcare","Medical","Shopping","Other"].map((category)=>`<option ${line.category===category?"selected":""}>${category}</option>`).join("")}</select><input class="input split-amount" data-index="${index}" type="number" step="0.01" min="0" value="${Number(line.amount).toFixed(2)}"></div>`).join("")}</div><button class="button small" data-action="add-split">+ Add category</button><div class="form-row" style="margin-top:16px"><label><input id="saveRule" type="checkbox"> Save Merchant Rule for ${esc(transaction.merchant)}</label><div class="muted" style="font-size:10px;margin-top:5px">Remember this category preference for future imports.</div></div><div class="notice" id="splitTotal">Split total: ${cad(splitTotal)} · Transaction total: ${cad(transaction.amount,2)}</div><div class="modal-actions"><button class="button" data-action="modal-close">Cancel</button><button class="button primary" data-action="split-save">Save split</button></div></section></div>`;
+    return `<div class="modal-backdrop" data-action="backdrop"><section class="modal"><div class="modal-head"><div><div class="eyebrow">Transaction details</div><h2>Split this transaction</h2><p class="subtitle" style="margin-top:6px">${esc(transaction.merchant)} · ${cad(transaction.amount,2)}</p></div><button type="button" class="modal-close" data-action="modal-close">×</button></div><div id="splitLines">${lines.map((line, index) => `<div class="split-line"><select class="select split-category" data-index="${index}">${categories.map((category)=>`<option ${line.category===category?"selected":""}>${category}</option>`).join("")}</select><input class="input split-amount" data-index="${index}" type="number" step="0.01" min="0" value="${Number(line.amount).toFixed(2)}"></div>`).join("")}</div><button type="button" class="button small" data-action="add-split">+ Add category</button><div class="form-row" style="margin-top:16px"><label><input id="saveRule" type="checkbox"> Save Merchant Rule for ${esc(transaction.merchant)}</label><div class="muted" style="font-size:10px;margin-top:5px">Remember this category preference for future imports.</div></div><div class="notice" id="splitTotal">Split total: ${cad(splitTotal)} · Transaction total: ${cad(transaction.amount,2)}</div><div class="modal-actions"><button type="button" class="button" data-action="modal-close">Cancel</button><button type="button" class="button primary" data-action="split-save">Save split</button></div></section></div>`;
   }
   if (modal && modal.type === "account") {
     const account=state.accounts.find(item=>item.id===modal.id);
@@ -614,14 +661,22 @@ function modalMarkup() {
     const receipt=(state.groceryReceipts||[]).find((item)=>item.id===modal.id);
     if(!receipt)return "";
     const receiptCents=Number(receipt.receiptTotalCents??receipt.expenseTotalCents??0);
-    const linked=state.transactions.find((transaction)=>transaction.id===receipt.matchedTransactionId);
-    const ledgerCents=linked?amountCents(linked,"amount"):Number(receipt.expenseTotalCents??receiptCents);
-    const bankCents=Number(receipt.bankAmountCents??0);
-    const difference=receipt.matchedTransactionId?bankCents-receiptCents:null;
-    return `<div class="modal-backdrop" data-action="backdrop"><section class="modal receipt-modal"><div class="modal-head"><div><div class="eyebrow">Saved expense proof</div><h2>${esc(receipt.merchant)}</h2><p class="subtitle">${dateLabel(receipt.date)} · ${esc(receipt.owner||"Household")}</p></div><button class="modal-close" data-action="modal-close">×</button></div><ul class="receipt-item-list">${(receipt.items||[]).map((item)=>`<li><span>${esc(item.name)} · ${Number(item.quantity||1)} × ${cad(fromCents(Number(item.unitPriceCents??receiptItemCents(item))))} · ${esc(item.category||item.bucket||"Uncategorized")}</span><strong>${cad(fromCents(receiptItemCents(item)))}</strong></li>`).join("")}</ul><div class="receipt-check-numbers"><span>Receipt: ${cad(fromCents(receiptCents))}</span><span>Ledger: ${cad(fromCents(ledgerCents))}</span>${receipt.matchedTransactionId?`<span>Bank: ${cad(fromCents(bankCents))}</span>`:"<span>Bank: not matched</span>"}</div>${receipt.matchedTransactionId?`<div class="notice ${difference===0?"":"receipt-mismatch"}">${difference===0?"Matched: receipt, ledger, and bank totals agree to the cent.":`Needs review: bank and ledger differ from the receipt by ${cad(fromCents(difference))}.`}</div>`:`<div class="notice">This expense is in the ledger. It is not linked to a bank transaction yet.</div>`}${receipt.hasAttachment?`<a class="button" href="/api/receipts/${encodeURIComponent(receipt.id)}/file" target="_blank" rel="noopener">Open original ${receipt.attachmentType==="application/pdf"?"PDF":"photo"}</a>`:""}<div class="modal-actions"><button class="button" data-action="receipt-delete">Remove expense & proof</button><button class="button primary" data-action="modal-close">Done</button></div></section></div>`;
+    const bankChoices = receipt.matchedTransactionId ? "" : `<div class="notice">Link a bank record yourself if the amount, date, or store does not match a suggestion. Linking a different amount flags Needs review and does not change either number.</div>${unmatchedBankTransactions().map((transaction)=>{
+      const bankCents=amountCents(transaction,"amount");
+      const gap=bankCents-receiptCents;
+      return `<article class="receipt-card"><div class="receipt-card-head"><strong>${esc(transaction.merchant)}</strong><span>${dateLabel(transaction.date)} · ${cad(fromCents(bankCents))}</span></div><p class="muted">${gap===0?"Same amount as this receipt.":`Bank amount differs by ${cad(fromCents(Math.abs(gap)))}.`}</p><button type="button" class="button small" data-action="receipt-confirm" data-receipt-id="${esc(receipt.id)}" data-transaction-id="${esc(transaction.id)}">Link this bank record</button></article>`;
+    }).join("")||`<p class="muted">No unmatched imported bank expense is available to link.</p>`}`;
+    const removeActions = modal.confirmDelete
+      ? `<div class="notice receipt-mismatch" role="alert">Remove this expense, its line items, and its saved proof? Account totals will be recalculated. This cannot be undone from this screen.</div><div class="modal-actions"><button type="button" class="button" data-action="receipt-delete-cancel">Keep expense</button><button type="button" class="button primary" data-action="receipt-delete" data-receipt-id="${esc(receipt.id)}">Yes, remove expense & proof</button></div>`
+      : `<div class="modal-actions"><button type="button" class="button" data-action="receipt-delete-ask" data-receipt-id="${esc(receipt.id)}">Remove expense & proof</button><button type="button" class="button primary" data-action="modal-close">Done</button></div>`;
+    return `<div class="modal-backdrop" data-action="backdrop"><section class="modal receipt-modal"><div class="modal-head"><div><div class="eyebrow">Saved expense proof</div><h2>${esc(receipt.merchant)}</h2><p class="subtitle">${dateLabel(receipt.date)} · ${esc(receipt.owner||"Household")}</p></div><button type="button" class="modal-close" data-action="modal-close">×</button></div><ul class="receipt-item-list">${(receipt.items||[]).map((item)=>`<li><span>${esc(item.name)} · ${Number(item.quantity||1)} × ${cad(fromCents(Number(item.unitPriceCents??receiptItemCents(item))))} · ${esc(item.category||item.bucket||"Uncategorized")}</span><strong>${cad(fromCents(receiptItemCents(item)))}</strong></li>`).join("")}</ul>${agreementMarkup(receipt)}${receipt.hasAttachment?`<a class="button" href="/api/receipts/${encodeURIComponent(receipt.id)}/file" target="_blank" rel="noopener">Open original ${receipt.attachmentType==="application/pdf"?"PDF":"photo"}</a>`:""}${bankChoices}${removeActions}</section></div>`;
   }
   if (modal === "import") {
-    return `<div class="modal-backdrop" data-action="backdrop"><section class="modal"><div class="modal-head"><div><div class="eyebrow">Canadian bank statements</div><h2>Import a CSV statement</h2><p class="subtitle" style="margin-top:6px">RBC, TD, CIBC, BMO, Scotiabank, Tangerine, EQ Bank and standard CSV formats.</p></div><button class="modal-close" data-action="modal-close">×</button></div><div class="form-row"><label for="csvOwner">Account owner</label><select class="select" id="csvOwner" style="width:100%"><option>Partner A</option><option>Partner B</option><option>Joint</option></select></div><div class="grid two-col"><div class="form-row"><label for="csvKind">Account type</label><select class="select" id="csvKind" style="width:100%"><option value="cash">Chequing / savings</option><option value="liability">Credit card</option></select></div><div class="form-row"><label for="csvAccount">Account name</label><input class="input" id="csvAccount" style="width:100%" value="Imported chequing"></div></div><div class="form-row"><label for="csvLast4">Last 4 digits (for duplicate protection)</label><input class="input" id="csvLast4" maxlength="4" value="0000" style="width:100%"></div><div class="drop-zone" id="dropZone"><strong>Drop your CSV statement here</strong>or <label class="button small" for="csvFile">choose a file</label><input type="file" id="csvFile" accept=".csv,text/csv" hidden><div id="fileName" style="margin-top:8px">Your statement is processed by this server.</div></div><div class="notice" style="margin-top:14px">Expected columns: Date, Description / Merchant, Amount (or separate Debit and Credit columns). Purchases, deposits, and internal transfers are routed based on account and merchant.</div><div class="modal-actions"><button class="button" data-action="modal-close">Cancel</button><button class="button primary" id="importButton">Import transactions</button></div></section></div>`;
+    return `<div class="modal-backdrop" data-action="backdrop"><section class="modal"><div class="modal-head"><div><div class="eyebrow">Canadian bank statements</div><h2>Import a CSV statement</h2><p class="subtitle" style="margin-top:6px">RBC, TD, CIBC, BMO, Scotiabank, Tangerine, EQ Bank and standard CSV formats.</p></div><button type="button" class="modal-close" data-action="modal-close">×</button></div><div class="form-row"><label for="csvOwner">Account owner</label><select class="select" id="csvOwner" style="width:100%"><option>Partner A</option><option>Partner B</option><option>Joint</option></select></div><div class="grid two-col"><div class="form-row"><label for="csvKind">Account type</label><select class="select" id="csvKind" style="width:100%"><option value="cash">Chequing / savings</option><option value="liability">Credit card</option></select></div><div class="form-row"><label for="csvAccount">Account name</label><input class="input" id="csvAccount" style="width:100%" value="Imported chequing"></div></div><div class="form-row"><label for="csvLast4">Last 4 digits (for duplicate protection)</label><input class="input" id="csvLast4" maxlength="4" value="0000" style="width:100%"></div><div class="drop-zone" id="dropZone"><strong>Drop your CSV statement here</strong>or <label class="button small" for="csvFile">choose a file</label><input type="file" id="csvFile" accept=".csv,text/csv" hidden><div id="fileName" style="margin-top:8px">Your statement is processed by this server.</div></div><div class="notice" style="margin-top:14px">After import, the next step lists saved receipts that match a new row on amount, date, and store. Nothing is linked until you press Confirm.</div><div class="modal-actions"><button type="button" class="button" data-action="modal-close">Cancel</button><button type="button" class="button primary" id="importButton">Import transactions</button></div></section></div>`;
+  }
+  if (modal && modal.type === "import-matches") {
+    const suggestions = receiptSuggestions();
+    return `<div class="modal-backdrop" data-action="backdrop"><section class="modal"><div class="modal-head"><div><div class="eyebrow">Import step 2</div><h2>Suggested receipt matches</h2><p class="subtitle" style="margin-top:6px">${esc(modal.summary || "Review matches before anything is linked.")}</p></div><button type="button" class="modal-close" data-action="modal-close">×</button></div>${suggestions.length ? suggestions.map(suggestionCard).join("") : `<div class="empty-state">No saved receipt matched an unmatched imported row on amount, date, and store. Nothing was linked.</div>`}<div class="modal-actions"><button type="button" class="button primary" data-action="modal-close">Done</button></div></section></div>`;
   }
   if (modal === "connect") {
     return `<div class="modal-backdrop" data-action="backdrop"><section class="modal"><div class="modal-head"><div><div class="eyebrow">Secure connection</div><h2>Connect a financial account</h2><p class="subtitle" style="margin-top:6px">Read-only data connections for your household workspace.</p></div><button class="modal-close" data-action="modal-close">×</button></div>${plaidConfigured ? `<div class="notice">Plaid is configured. Credentials and access tokens stay on the backend.</div><div class="form-row" style="margin-top:16px"><label>Connection environment</label><select class="select" style="width:100%" id="plaidEnvironment"><option>Sandbox</option><option>Limited Production</option></select></div><button class="button primary" style="width:100%" data-action="plaid-connect">Connect with Plaid</button><div id="plaidResult" class="muted" style="font-size:11px;margin-top:10px"></div>` : `<div class="notice warning">${plaidUnavailable ? "Plaid linking is not available in this Vercel demo yet." : "Bank sync not connected. Plaid is not configured on this server (missing PLAID_CLIENT_ID or PLAID_SECRET)."} Use the CSV importer to bring in a statement instead.</div><button class="button primary" style="width:100%;margin-top:14px" data-modal="import">Import a CSV statement</button>`}<hr style="border:0;border-top:1px solid var(--line);margin:18px 0"><div class="account-head"><div><div class="account-name">Joint account duplicate shield</div><div class="account-sub">Mute duplicate account feeds when already linked by your partner.</div></div><button class="button small" data-action="toggle-muted">Mark as muted</button></div><div class="modal-actions"><button class="button" data-action="modal-close">Done</button></div></section></div>`;
@@ -717,6 +772,7 @@ function render() {
   app.innerHTML = shellMarkup();
   pageMarkup();
   bindGlobalEvents();
+  if (modal) bindModalEvents();
 }
 function showToast(message) {
   document.querySelectorAll(".toast").forEach((toast)=>toast.remove());
@@ -831,13 +887,58 @@ async function handleAction(event) {
   }
   if (action === "receipt-add-item") {receiptDraft=readReceiptDraft();receiptDraft.items.push({name:"",quantity:1,unitPriceCents:0,lineTotalCents:0,category:"Groceries"});render();bindModalEvents();refreshReceiptTotals();}
   if (action === "receipt-save") await saveReceipt();
+  if (action === "receipt-delete-ask") {
+    event.preventDefault();
+    event.stopPropagation();
+    const receiptId=event.currentTarget.dataset.receiptId||modal?.id;
+    if(!receiptId){showToast("Could not find this expense to remove.");return;}
+    modal={type:"receipt-view",id:receiptId,confirmDelete:true};
+    render();
+    return;
+  }
+  if (action === "receipt-delete-cancel") {
+    event.preventDefault();
+    event.stopPropagation();
+    modal={type:"receipt-view",id:modal?.id};
+    render();
+    return;
+  }
   if (action === "receipt-delete") {
-    const receiptId=modal?.id;
-    if(!receiptId||!window.confirm("Remove this saved receipt and its itemized expense from the household books?"))return;
+    event.preventDefault();
+    event.stopPropagation();
+    const receiptId=event.currentTarget.dataset.receiptId||modal?.id;
+    if(!receiptId){showToast("Could not find this expense to remove.");return;}
+    if(!modal?.confirmDelete){modal={type:"receipt-view",id:receiptId,confirmDelete:true};render();return;}
     const response=await fetch(`/api/receipts/${encodeURIComponent(receiptId)}`,{method:"DELETE"});
     const result=await response.json();
     if(!response.ok){showToast(result.error||"Could not remove this receipt expense.");return;}
-    modal="";await loadState();showToast("Receipt expense removed.");
+    modal="";await loadState();showToast("Receipt expense, line items, and proof removed. Totals were recalculated.");
+    return;
+  }
+  if (action === "receipt-confirm") {
+    event.preventDefault();
+    event.stopPropagation();
+    await confirmReceiptMatch(event.currentTarget.dataset.receiptId, event.currentTarget.dataset.transactionId);
+    return;
+  }
+  if (action === "receipt-reject") {
+    event.preventDefault();
+    event.stopPropagation();
+    await rejectReceiptMatch(event.currentTarget.dataset.receiptId, event.currentTarget.dataset.transactionId);
+    return;
+  }
+  if (action === "import-delete") {
+    event.preventDefault();
+    event.stopPropagation();
+    const transactionId=event.currentTarget.dataset.transactionId;
+    if(!transactionId){showToast("Could not find that imported row.");return;}
+    const response=await fetch(`/api/transactions/${encodeURIComponent(transactionId)}`,{method:"DELETE"});
+    const result=await response.json();
+    if(!response.ok){showToast(result.error||"Could not remove the imported row.");return;}
+    if(result.state)state=result.state; else await loadState();
+    render();
+    showToast("Imported row removed. Nothing else was deleted.");
+    return;
   }
   if (action === "save-snowball") {
     const extra=Number(app.querySelector("#snowballExtra").value);
@@ -869,6 +970,9 @@ function readSplitLines() {
   return categories.map((category,index)=>({category,amount:amounts[index]}));
 }
 function bindModalEvents() {
+  const modalRoot = app.querySelector(".modal-backdrop");
+  if (!modalRoot || modalRoot.dataset.bound === "1") return;
+  modalRoot.dataset.bound = "1";
   app.querySelectorAll(".modal-backdrop[data-action], .modal [data-action]").forEach((button)=>button.addEventListener("click",handleAction));
   app.querySelectorAll(".modal [data-modal]").forEach((button)=>button.addEventListener("click",()=>{modal=button.dataset.modal;if(modal==="import")window.selectedCsv=null;render();bindModalEvents();}));
   const accountType=app.querySelector("#accountForm select[name='accountType']");
@@ -1165,6 +1269,29 @@ async function saveManualTransaction(event) {
   if(!await persist())return;
   modal="";render();showToast("Ledger entry and account balance saved.");
 }
+async function confirmReceiptMatch(receiptId, transactionId) {
+  if(!receiptId||!transactionId){showToast("Choose a receipt and a bank row before confirming.");return;}
+  const response=await fetch(`/api/receipts/${encodeURIComponent(receiptId)}`,{
+    method:"PATCH",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({confirm:true,transactionId})
+  });
+  const result=await response.json();
+  if(!response.ok){showToast(result.error||"Could not confirm this receipt match.");return;}
+  await loadState();
+  const agreement=expenseAgreement(result.receipt.matchStatus? (state.groceryReceipts||[]).find((item)=>item.id===receiptId) || result.receipt : result.receipt);
+  showToast(agreement.status==="matched"?"Matched — all three totals agree.":`Needs review. ${agreement.lines.join(" ")}`);
+}
+async function rejectReceiptMatch(receiptId, transactionId) {
+  if(!receiptId||!transactionId){showToast("Choose the suggestion to reject.");return;}
+  const response=await fetch(`/api/receipts/${encodeURIComponent(receiptId)}`,{
+    method:"PATCH",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({reject:true,transactionId})
+  });
+  const result=await response.json();
+  if(!response.ok){showToast(result.error||"Could not reject this suggestion.");return;}
+  await loadState();
+  showToast("Suggestion rejected. The receipt and the bank row were both kept.");
+}
 async function importCsv() {
   const file=window.selectedCsv;
   if(!file){showToast("Choose a CSV statement to import.");return;}
@@ -1173,17 +1300,31 @@ async function importCsv() {
   const response=await fetch("/api/transactions/import",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({csv,account})});
   const result=await response.json();
   if(!response.ok){showToast(result.error);return;}
-  state=result.state;modal="";render();showToast(`${result.imported} transaction(s) imported · ${result.duplicates} duplicate(s) skipped.`);
+  state=result.state;
+  modal={type:"import-matches",summary:`${result.imported} transaction(s) imported · ${result.duplicates} duplicate(s) skipped. Confirm a match only if it is the same purchase.`};
+  render();
+  showToast("Import saved. Review suggested receipt matches before linking anything.");
 }
 async function saveSplit() {
-  const lines=readSplitLines();
   const transaction=state.transactions.find((item)=>item.id===modal.splitId);
+  const receipt=receiptForTransaction(transaction);
+  if(receipt?.items?.length){
+    const itemCategories=[...app.querySelectorAll(".split-item-category")].map((input)=>input.value);
+    if(itemCategories.length!==receipt.items.length){showToast("Choose a category for every line item.");return;}
+    const response=await fetch(`/api/transactions/${encodeURIComponent(transaction.id)}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({itemCategories})});
+    const result=await response.json();
+    if(!response.ok){showToast(result.error);return;}
+    state=result.state;
+    modal="";render();showToast("Item categories saved. The expense total is unchanged.");
+    return;
+  }
+  const lines=readSplitLines();
   if(toCents(sumMoney(lines.map((line)=>line.amount)))!==toCents(transaction.amount)){showToast("Split amounts must equal the transaction total.");return;}
   const response=await fetch(`/api/transactions/${encodeURIComponent(transaction.id)}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({splits:lines,category:lines[0].category})});
   const result=await response.json();
   if(!response.ok){showToast(result.error);return;}
   state=result.state;
-  if(app.querySelector("#saveRule").checked){
+  if(app.querySelector("#saveRule")?.checked){
     state.merchantRules.unshift({merchant:transaction.merchant,category:lines[0].category});
     if(!await persist())return;
   }

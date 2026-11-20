@@ -477,28 +477,22 @@ const server = http.createServer(async (req, res) => {
       if (req.method === "PATCH" && url.pathname.startsWith("/api/receipts/")) {
         const id = decodeURIComponent(url.pathname.split("/").pop());
         const update = await body(req);
-        if (update.confirm !== true || typeof update.transactionId !== "string") {
-          return send(res, 400, { error: "Confirm a suggested bank transaction to link it to this receipt." });
-        }
         const state = readData();
         const receipt = (state.groceryReceipts || []).find((item) => item.id === id);
         const transaction = state.transactions.find((item) => item.id === update.transactionId);
-        if (!receipt || !transaction || transaction.type !== "expense" ||
-            !(transaction.bankImported || transaction.note === "CSV import" || transaction.note === "Bank sync") ||
-            !ReceiptValidation.receiptCandidate(receipt, transaction)) {
-          return send(res, 400, { error: "This transaction is not a suitable receipt match." });
+      if (!receipt || typeof update.transactionId !== "string") {
+        return send(res, 400, { error: "Choose a saved receipt and a bank transaction." });
+      }
+      if (update.reject === true) {
+        if (!transaction) return send(res, 404, { error: "Bank transaction not found." });
+        ReceiptValidation.rejectReceiptSuggestion(receipt, transaction);
+        writeData(state);
+        return send(res, 200, { receipt: ReceiptValidation.safeReceipt(receipt), rejected: true });
         }
-        if (receipt.matchedTransactionId) return send(res, 409, { error: "This receipt is already matched to a transaction." });
-        if (transaction.receiptId && transaction.receiptId !== receipt.id) {
-          return send(res, 409, { error: "This transaction is already matched to another receipt." });
+      if (update.confirm !== true) {
+        return send(res, 400, { error: "Confirm or reject the suggested bank transaction. Nothing is linked automatically." });
         }
-        receipt.matchedTransactionId = transaction.id;
-        receipt.bankAmountCents = moneyCents(transaction.amount);
-        receipt.ledgerTotalCents = moneyCents(transaction.amount);
-        receipt.differenceCents = receipt.bankAmountCents - receipt.receiptTotalCents;
-        receipt.matchStatus = receipt.differenceCents === 0 ? "matched" : "needs review";
-        transaction.receiptId = receipt.id;
-        transaction.matchStatus = receipt.matchStatus;
+      ReceiptValidation.applyReceiptLink(receipt, transaction, state.transactions);
         writeData(state);
         return send(res, 200, { receipt: ReceiptValidation.safeReceipt(receipt) });
       }
@@ -524,6 +518,7 @@ const server = http.createServer(async (req, res) => {
         if (linked?.receiptId === id) {
           delete linked.receiptId;
           delete linked.matchStatus;
+          delete linked.receiptMatchRole;
         }
         state.groceryReceipts.splice(index, 1);
         writeData(state);
@@ -616,40 +611,26 @@ const server = http.createServer(async (req, res) => {
           .map((t) => `${t.date}|${Number(t.amount).toFixed(2)}|${(t.last4 || "").toString()}|${t.type}`));
         const fresh = imported.filter((t) => {
           const key = `${t.date}|${t.amount.toFixed(2)}|${(account.last4 || "").toString()}|${t.type}`;
-          const receiptCandidate = (state.groceryReceipts || []).find((receipt) =>
-            !receipt.matchedTransactionId && ReceiptValidation.receiptCandidate(receipt, t));
           if (fingerprints.has(key)) return false;
           fingerprints.add(key);
-          if (receiptCandidate) t.receiptSuggestionId = receiptCandidate.id;
+          t.bankImported = true;
+          t.source = "bank";
+          ReceiptValidation.assignReceiptSuggestion(state.groceryReceipts, t);
           return true;
         });
         for (const transaction of fresh) {
-          const suggestedReceipt = (state.groceryReceipts || []).find((receipt) =>
-            receipt.id === transaction.receiptSuggestionId);
-          if (suggestedReceipt) {
-            const original = state.transactions.find((item) => item.id === suggestedReceipt.expenseTransactionId);
-            if (original && original.status === "Actual") {
-              original.status = "Superseded";
-              original.supersededByTransactionId = transaction.id;
-            }
-            transaction.source = "bank";
-            transaction.bankImported = true;
-          }
+          const suggestedReceipt = transaction.receiptSuggestionId
+            ? (state.groceryReceipts || []).find((receipt) => receipt.id === transaction.receiptSuggestionId)
+            : null;
           const rule = state.merchantRules.find((candidate) => transaction.merchant.toLowerCase().includes(candidate.merchant.toLowerCase()));
           if (rule && transaction.type === "expense") transaction.category = rule.category;
           const importedAccount = state.accounts.find((candidate) =>
             candidate.owner === transaction.owner &&
             (candidate.name.toLowerCase() === transaction.account.toLowerCase() || candidate.last4 === transaction.last4)
           );
-          if (transaction.type === "expense" && importedAccount) {
-            if (suggestedReceipt && suggestedReceipt.accountId === importedAccount.id) {
-              const prior = Number(suggestedReceipt.expenseTotalCents || suggestedReceipt.receiptTotalCents || 0);
-              const delta = moneyCents(transaction.amount) - prior;
-              importedAccount.balance = (moneyCents(importedAccount.balance) +
-                (importedAccount.kind === "liability" ? delta : -delta)) / 100;
-            } else if (importedAccount.kind === "liability") {
-              importedAccount.balance = (moneyCents(importedAccount.balance) + moneyCents(transaction.amount)) / 100;
-            }
+          if (transaction.type === "expense" && importedAccount?.kind === "liability" && !suggestedReceipt) {
+            transaction.balanceAppliedCents = moneyCents(transaction.amount);
+            importedAccount.balance = (moneyCents(importedAccount.balance) + transaction.balanceAppliedCents) / 100;
           }
           if (transaction.category === "Debt repayment") {
             const description = transaction.merchant.toLowerCase();
@@ -680,7 +661,12 @@ const server = http.createServer(async (req, res) => {
         const transaction = state.transactions.find((t) => t.id === id);
         if (!transaction) return send(res, 404, { error: "Transaction not found." });
         if (typeof update.category === "string") transaction.category = update.category.slice(0, 60);
-        if (Array.isArray(update.splits)) {
+        if (Array.isArray(update.itemCategories)) {
+          ReceiptValidation.applyItemCategories(state, transaction, update.itemCategories);
+        } else if (Array.isArray(update.splits)) {
+          if ((state.groceryReceipts || []).some((receipt) => receipt.expenseTransactionId === transaction.id || receipt.id === transaction.receiptId)) {
+            return send(res, 400, { error: "This expense has line items. Change each item's category instead of splitting the whole total." });
+          }
           const splits = update.splits.map((split) => ({ category: String(split.category).slice(0, 60), amount: Number(split.amount) }));
           if (splits.some((split) => !Number.isFinite(split.amount) || split.amount < 0) ||
               splits.reduce((sum, split) => sum + moneyCents(split.amount), 0) !== moneyCents(transaction.amount)) {
@@ -690,6 +676,34 @@ const server = http.createServer(async (req, res) => {
         }
         writeData(state);
         return send(res, 200, { state: publicState(state) });
+      }
+      if (req.method === "DELETE" && url.pathname.startsWith("/api/transactions/")) {
+        const id = decodeURIComponent(url.pathname.split("/").pop());
+        const state = readData();
+        const transaction = state.transactions.find((item) => item.id === id);
+        if (!transaction) return send(res, 404, { error: "Transaction not found." });
+        if (transaction.note !== "CSV import" && transaction.manual !== true) {
+          return send(res, 400, { error: "Only an imported statement row or a hand-entered ledger row can be removed here." });
+        }
+        if (transaction.source === "receipt") {
+          return send(res, 400, { error: "Remove a receipt expense from its proof record so its line items are removed too." });
+        }
+        if (Number.isSafeInteger(transaction.balanceAppliedCents) && transaction.balanceAppliedCents !== 0) {
+          const account = state.accounts.find((item) => item.owner === transaction.owner &&
+            (item.name === transaction.account || item.last4 === transaction.last4));
+          if (account) account.balance = (moneyCents(account.balance) - transaction.balanceAppliedCents) / 100;
+        }
+        const linkedReceipt = (state.groceryReceipts || []).find((receipt) => receipt.matchedTransactionId === id);
+        if (linkedReceipt) {
+          linkedReceipt.matchedTransactionId = null;
+          linkedReceipt.matchStatus = "pending";
+          linkedReceipt.bankAmountCents = null;
+          linkedReceipt.differenceCents = 0;
+          linkedReceipt.differences = [];
+        }
+        state.transactions = state.transactions.filter((item) => item.id !== id);
+        writeData(state);
+        return send(res, 200, { ok: true, state: publicState(state) });
       }
       if (req.method === "GET" && url.pathname === "/api/plaid/status") {
         return send(res, 200, { configured: Boolean(process.env.PLAID_CLIENT_ID && process.env.PLAID_SECRET) });
@@ -771,7 +785,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, contents, MIME[path.extname(file)] || "application/octet-stream");
     });
   } catch (error) {
-    return send(res, 400, { error: error.message || "The request could not be completed." });
+    return send(res, Number(error.status) || 400, { error: error.message || "The request could not be completed." });
   }
 });
 

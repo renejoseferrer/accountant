@@ -103,6 +103,7 @@
     let expenseCents = 0;
 
     for (const transaction of state.transactions || []) {
+      if (!countsTowardSpending(transaction)) continue;
       if (transaction.status !== "Actual" || !["income", "expense"].includes(transaction.type)) continue;
       const amountCents = shareCents(centsFor(transaction, "amount"), transaction.owner, view, jointShare);
       if (!amountCents) continue;
@@ -139,6 +140,10 @@
       expensesByCategoryCents: expensesByCategory,
       splitMismatches
     };
+  }
+
+  function countsTowardSpending(transaction) {
+    return transaction?.receiptMatchRole !== "bank-record";
   }
 
   function signedTransactionCents(transaction, view = "Combined Household", jointShare = 50) {
@@ -186,6 +191,7 @@
 
   return {
     calculateLedger,
+    countsTowardSpending,
     calculateBudgetPlan,
     centsFor,
     fixedDecimal,
