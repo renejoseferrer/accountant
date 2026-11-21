@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const Classification = require("../lib/classification.cjs");
+const ReceiptValidation = require("../lib/receipt-validation.cjs");
 const HouseholdMath = require("../public/household-math.js");
 
 test("fast food stays Wants and staples differ from grocery treats", () => {
@@ -83,6 +84,29 @@ test("returning a line item creates a linked refund and reduces spending by exac
   assert.equal(ledger.essentialsCents, 3000);
   assert.equal(ledger.wantsCents, 0);
   assert.equal(state.accounts[0].balanceCents, 12000);
+});
+
+test("removing a receipt clears its return, refund, and classification records", () => {
+  const state = {
+    accounts: [{ id: "cash", kind: "cash", balance: 92.25 }],
+    transactions: [
+      { id: "expense", amount: 10, amountCents: 1000, accountId: "cash" },
+      { id: "refund", amount: 2.25, amountCents: 225, accountId: "cash", refundFor: "expense" },
+      { id: "bank", receiptId: "receipt", receiptSuggestionId: "receipt", rejectedReceiptIds: ["receipt", "other"] }
+    ],
+    returnTasks: [{ id: "task", receiptId: "receipt", transactionId: "expense", refundTransactionId: "refund" }],
+    classificationChanges: [{ target: "expense" }, { target: "other" }]
+  };
+
+  ReceiptValidation.removeReceiptDependents(state, { id: "receipt", expenseTransactionId: "expense" });
+
+  assert.equal(state.accounts[0].balance, 90);
+  assert.deepEqual(state.transactions.map((transaction) => transaction.id), ["expense", "bank"]);
+  assert.equal(state.transactions[1].receiptId, undefined);
+  assert.equal(state.transactions[1].receiptSuggestionId, undefined);
+  assert.deepEqual(state.transactions[1].rejectedReceiptIds, ["other"]);
+  assert.deepEqual(state.returnTasks, []);
+  assert.deepEqual(state.classificationChanges, [{ target: "other" }]);
 });
 
 test("joint Essentials and Wants marks add to the cent in every household view", () => {

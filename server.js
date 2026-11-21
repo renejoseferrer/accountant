@@ -528,6 +528,7 @@ const server = http.createServer(async (req, res) => {
         const index = (state.groceryReceipts || []).findIndex((item) => item.id === id);
         if (index < 0) return send(res, 404, { error: "Receipt expense not found." });
         const receipt = state.groceryReceipts[index];
+        ReceiptValidation.removeReceiptDependents(state, receipt);
         const original = state.transactions.find((item) => item.id === receipt.expenseTransactionId);
         if (original?.status === "Actual" && original.source === "receipt") {
           const account = state.accounts.find((item) => item.id === receipt.accountId);
