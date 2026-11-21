@@ -189,8 +189,7 @@ function metrics() {
   const ledger = HouseholdMath.calculateLedger(state, view, jointShare);
   const income = fromCents(ledger.incomeCents);
   const expenses = fromCents(ledger.expenseCents);
-  const essentials = fromCents(tx.filter((t) => t.type === "expense").reduce((total, transaction) =>
-    total + HouseholdMath.transactionCategoryCents(transaction, ["Groceries", "Housing & Utilities", "Transit & Fuel", "Childcare", "Medical"], view, jointShare), 0));
+  const essentials = fromCents(ledger.essentialsCents);
   const debtPaid = sumMoney(tx.filter((t) => t.category === "Debt repayment").map((t) => t.shownAmount));
   const invested = sumMoney(tx.filter((t) => t.category === "Investment contribution").map((t) => t.shownAmount));
   const generalSavings = sumMoney(tx.filter((t) => t.category === "General savings").map((t) => t.shownAmount));
@@ -224,6 +223,135 @@ function metrics() {
 }
 function transactionCategoryTotal(transaction, categories) {
   return fromCents(HouseholdMath.transactionCategoryCents(transaction, categories, view, jointShare));
+}
+const classifyCategories = ["Groceries", "Housing & Utilities", "Transit & Fuel", "Childcare", "Medical", "Dining", "Shopping", "Subscriptions", "Other"];
+const essentialsCategories = new Set(["Groceries", "Housing & Utilities", "Transit & Fuel", "Childcare", "Medical"]);
+function normalizeClassText(value) { return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, " "); }
+function defaultMark(category) { return essentialsCategories.has(category) ? "Essentials" : "Wants"; }
+function suggestMark(merchant, name, category) {
+  const merchantText = normalizeClassText(merchant);
+  const itemText = normalizeClassText(name);
+  const fastFood = /\b(kfc|mcdonald|burger king|wendy|a w|taco bell|popeyes|subway|tim hortons|pizza hut|domino|fast food)\b/.test(merchantText);
+  const rule = state.merchantRules.find((candidate) => merchantText.includes(normalizeClassText(candidate.merchant)));
+  if (rule) return { category: fastFood ? "Dining" : rule.category, classification: fastFood ? "Wants" : rule.classification || defaultMark(rule.category), source: "merchant rule", confidence: "high" };
+  if (fastFood || /\b(restaurant|cafe|coffee|takeout|dining|kfc)\b/.test(`${merchantText} ${normalizeClassText(category)}`)) {
+    return { category: "Dining", classification: "Wants", source: "merchant type", confidence: "high" };
+  }
+  const prior = allClassificationItems().find((item) =>
+    item.transactionId &&
+    normalizeClassText(item.merchant) === merchantText && itemText &&
+    normalizeClassText(item.name) === itemText && item.category && item.classification);
+  if (prior) return { category: prior.category, classification: prior.classification, source: "same merchant history", confidence: "high" };
+  if (/\b(candy|chocolate|soda|pop|chips|cookies|cake|ice cream|beer|wine|alcohol|treat|snack|dessert|toy|game|movie|entertainment|makeup|luxury)\b/.test(itemText)) {
+    return { category: "Groceries", classification: "Wants", source: "item name", confidence: "high" };
+  }
+  if (/\b(milk|bread|egg|eggs|rice|vegetable|vegetables|fruit|apple|banana|potato|beans|oat|cereal|chicken|fish|meat|flour|pasta|formula)\b/.test(itemText)) {
+    return { category: "Groceries", classification: "Essentials", source: "item name", confidence: "high" };
+  }
+  if (/cleaner|detergent|soap|paper towel|toilet paper/.test(itemText)) {
+    return { category: "Housing & Utilities", classification: "Essentials", source: "item name", confidence: "medium" };
+  }
+  if (category) return { category, classification: defaultMark(category), source: "category default", confidence: "medium" };
+  return { category: "Other", classification: "Wants", source: "needs owner review", confidence: "low" };
+}
+function allClassificationItems() {
+  const items = [];
+  const receiptTransactionIds = new Set();
+  for (const receipt of state.groceryReceipts || []) {
+    receiptTransactionIds.add(receipt.expenseTransactionId);
+    for (const [index, item] of (receipt.items || []).entries()) {
+      items.push({
+        ...item, merchant: receipt.merchant, date: receipt.date, owner: receipt.owner,
+        transactionId: receipt.expenseTransactionId, receiptId: receipt.id, index,
+        amountCents: Number(item.lineTotalCents || 0), currentTransactionId: receipt.expenseTransactionId
+      });
+    }
+  }
+  for (const transaction of state.transactions || []) {
+    if (transaction.type !== "expense" || transaction.status !== "Actual" || transaction.receiptMatchRole === "bank-record" ||
+        receiptTransactionIds.has(transaction.id)) continue;
+    if (transaction.splits?.length) {
+      transaction.splits.forEach((split, index) => items.push({
+        ...split, merchant: transaction.merchant, date: transaction.date, owner: transaction.owner,
+        transactionId: transaction.id, index, amountCents: amountCents(split, "amount"),
+        currentTransactionId: transaction.id
+      }));
+    } else {
+      items.push({
+        name: transaction.merchant, merchant: transaction.merchant, date: transaction.date,
+        owner: transaction.owner, category: transaction.category, classification: transaction.classification,
+        classificationConfirmed: transaction.classificationConfirmed,
+        classificationConfidence: transaction.classificationConfidence,
+        amountCents: amountCents(transaction, "amount"), transactionId: transaction.id,
+        index: null, currentTransactionId: transaction.id
+      });
+    }
+  }
+  return items;
+}
+function classificationFlags(item) {
+  const flags = [];
+  const name = item.name || item.merchant;
+  const itemText = normalizeClassText(name);
+  if (item.classification === "Essentials" &&
+      (/^(dining|eating out|entertainment|shopping|subscriptions|other)$/.test(normalizeClassText(item.category)) ||
+        /\b(candy|chocolate|soda|pop|chips|cookies|cake|ice cream|beer|wine|alcohol|treat|snack|dessert|toy|game|movie|entertainment|makeup|luxury)\b/.test(itemText))) {
+    flags.push("This looks optional, but it is marked Essentials. Confirm the need or move it to Wants.");
+  }
+  const prior = allClassificationItems().find((candidate) => candidate !== item &&
+    candidate.transactionId !== item.transactionId && normalizeClassText(candidate.name) === itemText &&
+    Math.abs((new Date(`${item.date}T12:00:00Z`) - new Date(`${candidate.date}T12:00:00Z`)) / 86400000) <= 7);
+  if (prior) flags.push(`A similar item was bought within 7 days (on ${prior.date}).`);
+  const stock = (state.homeStock || []).find((entry) => normalizeClassText(entry.name) === itemText);
+  if (stock && Number(stock.quantity) >= 3) flags.push(`Home stock already lists ${stock.quantity} ${stock.name}.`);
+  if (stock?.expiryDate && /\b(milk|bread|egg|eggs|yogurt|cheese|lettuce|spinach|berry|berries|fruit|vegetable|produce|chicken|fish|meat|dairy)\b/.test(itemText)) {
+    const days = dayDiff(stock.expiryDate);
+    if (days >= 0 && days <= 3) flags.push(`${stock.name} already at home expires within 3 days (${stock.expiryDate}).`);
+  }
+  const prices = allClassificationItems().filter((candidate) => candidate.transactionId !== item.transactionId &&
+    normalizeClassText(candidate.name) === itemText && candidate.amountCents > 0).map((candidate) => candidate.amountCents);
+  if (prices.length) {
+    const usual = Math.round(prices.reduce((sum, value) => sum + value, 0) / prices.length);
+    if (item.amountCents >= Math.ceil(usual * 1.5) && item.amountCents - usual >= 100) {
+      flags.push(`This costs ${cad(fromCents(item.amountCents))}; usual recorded price is ${cad(fromCents(usual))}.`);
+    }
+  }
+  return flags;
+}
+function needsClassificationReview(item) {
+  return !["Essentials", "Wants"].includes(item.classification) ||
+    item.classificationConfirmed !== true || item.classificationConfidence === "low";
+}
+function markLabel(value) { return value === "Essentials" ? "Essentials" : value === "Wants" ? "Wants" : "Unclassified"; }
+function categoryLabel(value) { return value === "Dining" ? "Eating Out" : value; }
+function classificationReviewMarkup() {
+  const pending = allClassificationItems().filter(needsClassificationReview);
+  const rows = pending.map((item, index) => `<label class="classification-review-row"><input type="checkbox" class="classification-select" data-transaction-id="${esc(item.transactionId)}" ${item.index === null ? "" : `data-item-index="${item.index}"`}><span><strong>${esc(item.name)}</strong><small>${esc(item.merchant)} · ${categoryLabel(item.category)} · ${cad(fromCents(item.amountCents))} · Suggestion: ${markLabel(item.classification)} (${esc(item.classificationSource || "review")})</small></span></label>`).join("");
+  return sectionCard("Classification review", "Confirm suggestions, or select several items and apply a shared category and/or mark.", `${pending.length ? `<div class="classification-review-list">${rows}</div><div class="classification-bulk"><select class="select" id="bulkCategory"><option value="">Keep category</option>${classifyCategories.map((item) => `<option value="${esc(item)}">${esc(categoryLabel(item))}</option>`).join("")}</select><select class="select" id="bulkMark"><option value="">Keep mark</option><option>Essentials</option><option>Wants</option></select><input class="input" id="bulkReason" placeholder="Reason for changes" value="Confirmed classification suggestion"><button type="button" class="button primary" data-action="classification-bulk">Apply to selected</button></div>` : `<div class="empty-state">No items are waiting for classification review.</div>`}`);
+}
+function flagsMarkup() {
+  const flagged = allClassificationItems().flatMap((item) => classificationFlags(item).map((reason) => ({ item, reason })));
+  return sectionCard("Accountant flags", "Advice only—flags never change a mark or a total.", flagged.length
+    ? `<div class="flag-list">${flagged.map(({ item, reason }) => `<article class="flag-card"><div><strong>${esc(item.name)}</strong><small>${esc(item.merchant)} · ${cad(fromCents(item.amountCents))} · ${esc(categoryLabel(item.category))} / ${esc(markLabel(item.classification))}</small><p>${esc(reason)}</p></div><div class="flag-action"><input class="input return-by-input" type="date" aria-label="Return by date"><button type="button" class="button small" data-action="return-task-create" data-transaction-id="${esc(item.transactionId)}" ${item.index === null ? "" : `data-item-index="${item.index}"`}>Consider return</button></div></article>`).join("")}</div>`
+    : `<div class="empty-state">No accountant flags for the current household records.</div>`);
+}
+function stockMarkup() {
+  const rows = (state.homeStock || []).map((item) => `<div class="metric-row"><span><strong>${esc(item.name)}</strong><small>${Number(item.quantity)} at home${item.expiryDate ? ` · expires ${dateLabel(item.expiryDate)}` : ""}</small></span><button class="button small" data-action="stock-delete" data-stock-id="${esc(item.id)}">Remove</button></div>`).join("");
+  return sectionCard("Home stock", "A simple household list used to flag items already in stock or nearing expiry.", `<form id="homeStockForm" class="classification-bulk"><input class="input" name="name" maxlength="120" placeholder="Item name" required><input class="input" name="quantity" type="number" min="0" step="1" value="1" required><input class="input" name="expiryDate" type="date" aria-label="Optional expiry date"><button class="button primary">Add to stock</button></form><div class="metric-list">${rows || `<p class="muted">No home stock items yet.</p>`}</div>`);
+}
+function returnTasksMarkup() {
+  const tasks = state.returnTasks || [];
+  const open = tasks.filter((task) => task.status === "open");
+  const completed = tasks.filter((task) => task.status !== "open").slice(0, 8);
+  return sectionCard("Consider return tasks", "Open reminders stay here and on Overview until returned, kept, or dismissed.", `${open.length
+    ? `<div class="flag-list">${open.map((task) => `<article class="flag-card"><div><strong>${esc(task.itemName)}</strong><small>${esc(task.merchant)} · ${cad(fromCents(task.amountCents))}${task.returnBy ? ` · Return by ${dateLabel(task.returnBy)}` : ""}${task.returnBy && dayDiff(task.returnBy) < 0 ? ` · <span class="overdue">Overdue</span>` : ""}</small></div><div class="flag-action"><input class="input kept-reason" data-task-id="${esc(task.id)}" placeholder="Reason if kept"><button class="button small primary" data-action="return-task-finish" data-task-id="${esc(task.id)}" data-status="Returned">Returned</button><button class="button small" data-action="return-task-finish" data-task-id="${esc(task.id)}" data-status="Kept">Kept</button><button class="button small" data-action="return-task-finish" data-task-id="${esc(task.id)}" data-status="Dismissed">Dismiss</button></div></article>`).join("")}</div>`
+    : `<div class="empty-state">No open return reminders.</div>`}${completed.map((task) => `<div class="metric-row"><span>${esc(task.itemName)} · ${esc(task.status)}${task.keptReason ? ` — ${esc(task.keptReason)}` : ""}</span><small>${cad(fromCents(task.amountCents))}</small></div>`).join("")}`);
+}
+function classificationChangesMarkup() {
+  const changes = state.classificationChanges || [];
+  return sectionCard("Changes by your accountant", "Classification and category edits are recorded with a reason.", changes.length
+    ? `<div class="metric-list">${changes.slice(0, 50).map((change) => `<div class="metric-row"><span><strong>${esc(change.targetName)}</strong><small>${esc(change.field)}: ${esc(change.from)} → ${esc(change.to)} · ${esc(change.reason)}</small></span><small>${dateLabel(change.changedAt.slice(0, 10), { month: "short", day: "numeric", year: "numeric" })} · ${esc(change.changedBy)}</small></div>`).join("")}</div>`
+    : `<div class="empty-state">No classification changes recorded.</div>`);
 }
 
 function loginMarkup() {
@@ -284,8 +412,13 @@ function transactionRow(t) {
   const receiptAction = linkedReceipt ? `<button class="table-action" type="button" data-view-receipt="${esc(linkedReceipt.id)}">Items / proof</button>` : "";
   const agreement = linkedReceipt ? expenseAgreement(linkedReceipt) : null;
   const review = agreement?.status === "needs review" ? `<span class="pill amber">Needs review</span>` : t.receiptMatchRole === "bank-record" ? `<span class="pill">Linked bank record</span>` : "";
+  const classified=allClassificationItems().filter((item)=>item.transactionId===t.id);
+  const essentialsCents=classified.filter((item)=>item.classification==="Essentials").reduce((sum,item)=>sum+item.amountCents,0);
+  const wantsCents=classified.filter((item)=>item.classification==="Wants").reduce((sum,item)=>sum+item.amountCents,0);
+  const flagCount=classified.reduce((sum,item)=>sum+classificationFlags(item).length,0);
+  const classSummary=classified.length?`<small class="classification-row-summary">${cad(fromCents(essentialsCents))} Essentials · ${cad(fromCents(wantsCents))} Wants${flagCount?` · ${flagCount} flag(s)`:""}</small>`:"";
   const importRemove = t.note === "CSV import" ? `<button type="button" class="table-action" data-action="import-delete" data-transaction-id="${esc(t.id)}">Remove import</button>` : "";
-  return `<tr><td data-label="Date">${dateLabel(t.date)}</td><td data-label="Merchant"><div class="merchant-cell"><span class="merchant-icon">${esc(iconFor(t.merchant))}</span><span>${esc(t.merchant)}${t.mcc ? `<small class="muted" style="display:block;font-weight:400;margin-top:3px">MCC ${esc(t.mcc)}</small>` : ""}</span></div></td><td data-label="Category">${badge} ${review}</td><td data-label="Owner">${esc(t.owner)}</td><td data-label="Account">${esc(t.account)}</td><td data-label="Amount" class="amount">${signed}${cad(t.shownAmount ?? t.amount, 2)}</td><td data-label="Actions">${t.manual?`<button type="button" class="table-action" data-edit-transaction="${esc(t.id)}">Edit</button>`:""}${receiptAction}<button type="button" class="table-action" data-split="${esc(t.id)}">Split</button>${importRemove}</td></tr>`;
+  return `<tr><td data-label="Date">${dateLabel(t.date)}</td><td data-label="Merchant"><div class="merchant-cell"><span class="merchant-icon">${esc(iconFor(t.merchant))}</span><span>${esc(t.merchant)}${t.mcc ? `<small class="muted" style="display:block;font-weight:400;margin-top:3px">MCC ${esc(t.mcc)}</small>` : ""}${classSummary}</span></div></td><td data-label="Category">${badge} ${review}</td><td data-label="Owner">${esc(t.owner)}</td><td data-label="Account">${esc(t.account)}</td><td data-label="Amount" class="amount">${signed}${cad(t.shownAmount ?? t.amount, 2)}</td><td data-label="Actions">${t.manual?`<button type="button" class="table-action" data-edit-transaction="${esc(t.id)}">Edit</button>`:""}${receiptAction}<button type="button" class="table-action" data-split="${esc(t.id)}">Split</button>${importRemove}</td></tr>`;
 }
 function recentTransactions(limit = 5, filter = () => true) {
   const rows = visibleTransactions().filter(filter).slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, limit);
@@ -323,14 +456,14 @@ function budgetMarkup() {
     transaction.date >= `${year}-${String(month + 1).padStart(2, "0")}-01` && transaction.date <= householdDate());
   const sharedCents = (transaction) => HouseholdMath.shareCents(amountCents(transaction, "amount"), transaction.owner, view, jointShare);
   const expenseCents = actuals.filter((transaction) => transaction.type === "expense")
-    .reduce((total, transaction) => total + sharedCents(transaction), 0);
-  const essentialsCategories = ["Groceries", "Housing & Utilities", "Transit & Fuel", "Childcare", "Medical"];
+    .reduce((total, transaction) => total + HouseholdMath.transactionNetExpenseCents(transaction, view, jointShare), 0);
   const essentialsCents = actuals.filter((transaction) => transaction.type === "expense")
-    .reduce((total, transaction) => total +
-      HouseholdMath.transactionCategoryCents(transaction, essentialsCategories, view, jointShare), 0);
+    .reduce((total, transaction) => total + HouseholdMath.transactionClassificationCents(transaction, "Essentials", view, jointShare), 0);
+  const wantsCents = actuals.filter((transaction) => transaction.type === "expense")
+    .reduce((total, transaction) => total + HouseholdMath.transactionClassificationCents(transaction, "Wants", view, jointShare), 0);
   const actualCentsByCategory = {
     Essentials: essentialsCents,
-    "Fun / Wants": expenseCents - essentialsCents,
+    "Fun / Wants": wantsCents + Math.max(0, expenseCents - essentialsCents - wantsCents),
     "Debt Payoff": actuals.filter((transaction) => transaction.category === "Debt repayment")
       .reduce((total, transaction) => total + sharedCents(transaction), 0),
     "General Savings": actuals.filter((transaction) => transaction.category === "General savings")
@@ -347,9 +480,9 @@ function budgetMarkup() {
     const percentage = row.targetCents ? row.actualCents / row.targetCents * 100 : 0;
     const targetPercent = state.budget.find((item) => item.category === row.category).target;
     const details = row.category === "Essentials"
-      ? `${essentialsCategories.map((category) => `${category} ${cad(fromCents(actuals.filter((transaction) => transaction.type === "expense").reduce((total, transaction) => total + HouseholdMath.transactionCategoryCents(transaction, [category], view, jointShare), 0)))}`).join(" + ")} = ${cad(actual)}`
+      ? `${cad(actual)} in line items and transactions marked Essentials`
       : row.category === "Fun / Wants"
-        ? `${cad(fromCents(expenseCents))} total expenses − ${cad(fromCents(essentialsCents))} Essentials = ${cad(actual)}`
+        ? `${cad(actual)} in line items and transactions marked Wants`
         : `${cad(actual)} recorded ${row.category.toLowerCase()} activity`;
     const calculation = `${details}; ${targetPercent}% × ${cad(fromCents(basisCents))} full-month income = ${cad(target)}`;
     return `<div class="budget-row"><span>${definitions[row.category] ? term(row.category, "", calculation) : esc(row.category)}</span><div><div class="progress ${percentage > 100 ? "over" : ""}"><span style="width:${Math.min(100, percentage)}%"></span></div><div class="muted budget-figures" style="font-size:9px;margin-top:4px"><span>Month to date, ${monthLabel} 1–${elapsedDays}: ${cad(actual)}</span><span>Full month target: ${cad(target)}</span><span>Projected month end: ${cad(projection)}</span></div></div><span class="progress-target">${esc(targetPercent)}%</span></div>`;
@@ -370,6 +503,7 @@ function overviewScreen() {
   const liabilities = m.accounts.filter((account) => account.kind === "liability");
   const currentLiabilities = amount(liabilities.filter((account) => /credit card/i.test(account.accountType || "")));
   const longTermLiabilities = subtractMoney(m.debt, currentLiabilities);
+  const openReturns=(state.returnTasks||[]).filter((task)=>task.status==="open");
   return `${pageHeading(todayLabel, `Good evening, ${esc(signedInUser)}.`, "Here’s your household money at a glance.", `<button class="button" data-modal="import">Import statement</button>`)}
     <div class="grid stats-grid">
       ${statCard("Net Worth", cad(m.netWorth), `<span class="trend">↗ 8.0%</span> over the last 6 months`, "↗", `${cad(m.assets)} − ${cad(m.debt)} = ${cad(m.netWorth)}`)}
@@ -379,6 +513,7 @@ function overviewScreen() {
     </div>
     <div class="grid content-grid"><section class="card chart-card"><div class="card-header"><div><h2>${term("Net Worth", "", `${cad(m.assets)} − ${cad(m.debt)} = ${cad(m.netWorth)}`, { label: "Net worth over time" })}</h2><p>Household assets less liabilities · last 6 months</p></div><span class="pill green">+8.0% this period</span></div>${chartMarkup()}</section><section class="card breakdown-card"><div class="card-header"><div><h2>Assets by owner</h2><p>One shared view, no double-counting</p></div><button class="button small" data-screen="balance">Details</button></div>${ownerBreakdown()}</section></div>
     <div class="grid content-grid"><section class="card"><div class="card-header"><div><h2>Monthly plan</h2><p>Actuals are month-to-date; targets are full-month equivalents from expected pay cadence (${budgetSplitLabel()}).</p></div><button class="button small" data-screen="cashflow">View plan</button></div>${budgetMarkup()}</section><article class="card insight-card"><div class="insight-label">A thoughtful next step · Personal Accountant</div><h2>Your household has ${m.liquidRatio.toFixed(1)} months of essential spending in liquid funds.</h2><p>${m.liquidRatio < 3 ? "Building toward a three-month reserve can make unexpected costs easier to manage." : m.liquidRatio <= 6 ? "You’re within the typical 3–6 month emergency runway range. Keep this reserve accessible." : "Your accessible reserve is above the typical 3–6 month range. Consider whether part of it is intended for another near-term goal."}</p><button class="button small" data-screen="balance">Explore your ratios →</button></article></div>
+    ${openReturns.length?sectionCard("Open return reminders",`${openReturns.length} item(s) are awaiting a return decision.`,`<div class="metric-list">${openReturns.map((task)=>`<div class="metric-row"><span><strong>${esc(task.itemName)}</strong><small>${esc(task.merchant)}${task.returnBy?` · Return by ${dateLabel(task.returnBy)}`:""}${task.returnBy&&dayDiff(task.returnBy)<0?' · <span class="overdue">Overdue</span>':""}</small></span><strong>${cad(fromCents(task.amountCents))}</strong></div>`).join("")}</div>`) : ""}
     <div class="grid content-grid"><section class="card section-card"><div class="section-title-row"><div><h2>Recent activity</h2><p class="muted" style="font-size:11px;margin:5px 0 0">Purchases, income, and transfers—all clearly separated</p></div><button class="button small" data-screen="ledger">Open ledger</button></div><div class="table-wrap"><table class="mobile-table">${tableHeader(["Date", "Merchant", "Category", "Owner", "Account", "Amount", "Actions"])}<tbody>${recentTransactions(5)}</tbody></table></div></section><section class="card"><div class="card-header"><div><h2>Coming up</h2><p>Expected amounts stay out of today’s balances</p></div><button class="button small" data-screen="cashflow">30 days</button></div>${scheduleList(4)}</section></div>`;
 }
 function balanceScreen() {
@@ -578,12 +713,17 @@ function babyStepsScreen() {
   const receiptMarkup=filteredReceipts.length?filteredReceipts.map((receipt)=>{
     const agreement=expenseAgreement(receipt);
     const status=agreement.status==="matched"?`<span class="pill green">${esc(agreement.label)}</span>`:agreement.status==="needs review"?`<span class="pill amber">Needs review</span>`:`<span class="pill">Waiting for a bank match</span>`;
-    const items=(receipt.items||[]).map((item)=>`<li><span>${esc(item.name)} · ${Number(item.quantity||1)} × ${cad(fromCents(Number(item.unitPriceCents??receiptItemCents(item))))} · ${esc(item.category||item.bucket||"Uncategorized")}</span><strong>${cad(fromCents(receiptItemCents(item)))}</strong></li>`).join("");
+    const items=(receipt.items||[]).map((item,index)=>{const entry={...item,name:item.name,merchant:receipt.merchant,date:receipt.date,transactionId:receipt.expenseTransactionId,index,amountCents:receiptItemCents(item)};const flags=classificationFlags(entry);return `<li><span><strong>${esc(item.name)}</strong> · ${Number(item.quantity||1)} × ${cad(fromCents(Number(item.unitPriceCents??receiptItemCents(item))))} · ${esc(categoryLabel(item.category||item.bucket||"Uncategorized"))} · <span class="pill">${esc(markLabel(item.classification))}</span>${flags.map((reason)=>`<small class="classification-flag">${esc(reason)}</small>`).join("")}</span><strong>${cad(fromCents(receiptItemCents(item)))}</strong></li>`;}).join("");
     return `<article class="receipt-card"><div class="receipt-card-head"><div><strong>${esc(receipt.merchant)}</strong><div class="muted">${dateLabel(receipt.date)} · ${esc(receipt.owner||"Household")} · ${esc(state.accounts.find((account)=>account.id===receipt.accountId)?.name||"Payment account")}</div></div>${status}</div><ul class="receipt-item-list">${items}</ul><div class="receipt-card-total"><strong>Receipt total ${cad(fromCents(agreement.receiptCents))}</strong>${agreementMarkup(receipt)}</div><div class="receipt-card-actions"><button type="button" class="button small" data-view-receipt="${esc(receipt.id)}">View expense details</button>${receipt.hasAttachment?`<a class="button small" href="/api/receipts/${encodeURIComponent(receipt.id)}/file" target="_blank" rel="noopener">Open original ${receipt.attachmentType==="application/pdf"?"PDF":"photo"}</a>`:'<span class="muted">No receipt file attached</span>'}</div></article>`;
   }).join(""):`<div class="empty-state">${receipts.length?"No saved expenses match your search.":"No itemized expenses yet. Add one by hand or upload a receipt photo."}</div>`;
-  return `${pageHeading("Simple steps, one household plan","Baby Steps & itemized expenses","Keep receipt proof and reviewed line items with each household expense.",`<button class="button" data-action="receipt-manual">+ Add expense by hand</button><button class="button primary" data-action="receipt-scan">＋ Upload / take receipt photo</button>`)}
+  return `${pageHeading("Simple steps, one household plan","Baby Steps & itemized expenses","Keep receipt proof, line-item classifications, and return reminders together.",`<button class="button" data-action="merchant-rules">Merchant rules</button><button class="button" data-action="receipt-manual">+ Add expense by hand</button><button class="button primary" data-action="receipt-scan">＋ Upload / take receipt photo</button>`)}
     ${sectionCard("Your Baby Steps",`Current focus: Step ${currentStep} · based on balances you’ve entered`,`${steps.map((step,index)=>{const number=index+1;const active=number===currentStep;const complete=number<currentStep;const progress=Math.min(100,Math.max(0,step[3]?step[2]/step[3]*100:0));return `<div class="baby-step ${active?"active":""} ${complete?"complete":""}"><span class="step-number">${complete?"✓":number}</span><div class="step-copy"><strong>${esc(step[0])}</strong><p>${esc(step[1])}</p><div class="progress"><span style="width:${progress}%"></span></div><small>${number===2?`${cad(nonMortgageDebt)} non-mortgage debt remains`:number===1?`${cad(starter)} of ${cad(1000)} starter cushion`:number===3?`${cad(fullFund)} of ${cad(fullFundTarget)} full-fund target`:`${cad(m.invested)} recorded investment contributions · target guide ${cad(step[3])}`}</small><span class="pill">${esc(step[4])}</span></div></div>`}).join("")}<div class="notice">A simple adaptation of Dave Ramsey’s Baby Steps for your household plan—not financial advice. The 15% savings bucket builds your emergency cushion; the 15% investments bucket supports long-term wealth. During the debt step, use the 10% debt bucket plus any planned snowball extra. When non-mortgage debt is cleared, consider rolling that payment into wealth building.</div>`)}
     ${reviewMarkup}
+    ${classificationReviewMarkup()}
+    ${flagsMarkup()}
+    ${returnTasksMarkup()}
+    ${stockMarkup()}
+    ${classificationChangesMarkup()}
     ${suggestionMarkup}
     ${sectionCard("Itemized expenses & receipt proof","Each line item is categorized separately. An imported bank transaction is only linked after you confirm it.",`<div class="filter-row"><input class="input search-input" id="receiptSearch" placeholder="Search store or item…" value="${esc(receiptSearch)}"><button class="button small" data-action="receipt-manual">Add by hand</button><button class="button small" data-action="receipt-scan">Upload / take photo</button></div>${receiptMarkup}`)}`;
 }
@@ -626,7 +766,7 @@ function modalMarkup() {
     if (receipt?.items?.length) {
       const itemTotal = receipt.items.reduce((total, item) => total + receiptItemCents(item), 0);
       const transactionCents = amountCents(transaction, "amount");
-      return `<div class="modal-backdrop" data-action="backdrop"><section class="modal"><div class="modal-head"><div><div class="eyebrow">Line items</div><h2>Split this receipt by item</h2><p class="subtitle" style="margin-top:6px">${esc(transaction.merchant)} · ${cad(transaction.amount,2)}</p></div><button type="button" class="modal-close" data-action="modal-close">×</button></div><p class="muted">Each item keeps its own amount. Choose a category for each item. The item total must equal the expense total.</p><div id="splitLines">${receipt.items.map((item, index) => `<div class="split-line item-split-line"><span>${esc(item.name)}</span><strong>${cad(fromCents(receiptItemCents(item)))}</strong><select class="select split-item-category" data-index="${index}">${categories.map((category)=>`<option value="${esc(category)}" ${(item.category||"Groceries")===category?"selected":""}>${category}</option>`).join("")}</select></div>`).join("")}</div><div class="notice ${itemTotal===transactionCents?"":"receipt-mismatch"}" id="splitTotal">Item total: ${cad(fromCents(itemTotal))} · Expense total: ${cad(fromCents(transactionCents))}${itemTotal===transactionCents?"":` · Difference: ${cad(fromCents(transactionCents-itemTotal))}`}</div><div class="modal-actions"><button type="button" class="button" data-action="modal-close">Cancel</button><button type="button" class="button primary" data-action="split-save">Save item categories</button></div></section></div>`;
+      return `<div class="modal-backdrop" data-action="backdrop"><section class="modal"><div class="modal-head"><div><div class="eyebrow">Line items</div><h2>Split this receipt by item</h2><p class="subtitle" style="margin-top:6px">${esc(transaction.merchant)} · ${cad(transaction.amount,2)}</p></div><button type="button" class="modal-close" data-action="modal-close">×</button></div><p class="muted">Each item keeps its own amount. Choose a category and need/want mark for each item. The item total must equal the expense total.</p><div id="splitLines">${receipt.items.map((item, index) => `<div class="split-line item-split-line"><span>${esc(item.name)}</span><strong>${cad(fromCents(receiptItemCents(item)))}</strong><select class="select split-item-category" data-index="${index}">${categories.map((category)=>`<option value="${esc(category)}" ${(item.category||"Groceries")===category?"selected":""}>${categoryLabel(category)}</option>`).join("")}</select><select class="select split-item-classification" data-index="${index}" aria-label="Need or want for ${esc(item.name)}"><option ${item.classification==="Essentials"?"selected":""}>Essentials</option><option ${item.classification==="Wants"?"selected":""}>Wants</option></select></div>`).join("")}</div><div class="notice ${itemTotal===transactionCents?"":"receipt-mismatch"}" id="splitTotal">Item total: ${cad(fromCents(itemTotal))} · Expense total: ${cad(fromCents(transactionCents))}${itemTotal===transactionCents?"":` · Difference: ${cad(fromCents(transactionCents-itemTotal))}`}</div><div class="form-row"><label>Reason for classification/category changes</label><input class="input" id="splitChangeReason" value="Updated in item split dialog" required></div><div class="modal-actions"><button type="button" class="button" data-action="modal-close">Cancel</button><button type="button" class="button primary" data-action="split-save">Save item categories</button></div></section></div>`;
     }
     const lines = modal.lines || [{ category: transaction.category, amount: transaction.amount }, { category: "Household", amount: 0 }];
     const splitTotal = sumMoney(lines.map((line) => line.amount));
@@ -655,7 +795,7 @@ function modalMarkup() {
     const account=accounts.find((entry)=>entry.id===draft.accountId)||defaultAccount;
     const attachmentPreview=receiptAttachmentDraft?.type?.startsWith("image/")?`<img class="receipt-preview" src="${receiptAttachmentDraft.dataUrl}" alt="Original receipt photo preview">`:receiptAttachmentDraft?.type==="application/pdf"?`<div class="notice">PDF attached: ${esc(receiptAttachmentDraft.name)} · ${Math.ceil(receiptAttachmentDraft.bytes/1024)} KB</div>`:"";
     const status=receiptAttachmentDraft?.status||"Choose a receipt image for on-device OCR, or attach a PDF and enter items below.";
-    return `<div class="modal-backdrop" data-action="backdrop"><section class="modal receipt-modal"><div class="modal-head"><div><div class="eyebrow">${modal==="receipt-scan"?"Receipt photo review":"Manual itemized expense"}</div><h2>${modal==="receipt-scan"?"Review receipt items":"Add an itemized expense"}</h2><p class="subtitle" style="margin-top:6px">Nothing is saved until you review the details and the cents match.</p></div><button class="modal-close" data-action="modal-close">×</button></div>${modal==="receipt-scan"?`<div class="drop-zone"><label for="receiptImage" class="button small">Take photo / choose image or PDF</label><input type="file" id="receiptImage" accept="image/*,application/pdf" capture="environment" hidden><div id="receiptOcrStatus" style="margin-top:9px">${esc(status)}</div>${attachmentPreview}</div>`:""}<form id="receiptForm"><div class="form-row" style="margin-top:15px"><label>Store or merchant</label><input id="receiptMerchant" class="input" maxlength="100" required value="${esc(draft.merchant)}"></div><div class="grid two-col"><div class="form-row"><label>Date</label><input id="receiptDate" class="input" type="date" required value="${esc(draft.date)}"></div><div class="form-row"><label>Payment account</label><select class="select" id="receiptAccount" required>${accounts.map((entry)=>`<option value="${esc(entry.id)}" ${entry.id===account?.id?"selected":""}>${esc(entry.name)} · ${esc(entry.owner)} · ${entry.kind==="liability"?"Credit card":"Cash"}</option>`).join("")}</select></div></div><div class="form-row"><label>Receipt total (CAD)</label><input id="receiptTotal" class="input" type="number" min="0.01" step="0.01" required value="${fromCents(initialTotal).toFixed(2)}"></div><div class="receipt-items-head"><strong>Line items · categorize each item</strong><button class="button small" type="button" data-action="receipt-add-item">+ Add item</button></div><div class="receipt-item-labels"><span>Item</span><span>Qty</span><span>Price each</span><span>Line total</span><span>Category</span><span></span></div><div id="receiptItems">${draft.items.map((item,index)=>`<div class="receipt-item-row"><input class="input receipt-item-name" aria-label="Item name" maxlength="120" required value="${esc(item.name)}" placeholder="Item"><input class="input receipt-item-quantity" aria-label="Quantity" type="number" min="1" max="999" step="1" required value="${Number(item.quantity||1)}" placeholder="Qty"><input class="input receipt-item-price" aria-label="Price per item" type="number" min="0" step="0.01" required value="${fromCents(Number(item.unitPriceCents??item.amountCents??0)).toFixed(2)}" placeholder="Price each"><output class="receipt-line-total">${cad(fromCents(Number(item.lineTotalCents??item.amountCents??0)))}</output><select class="select receipt-item-category" aria-label="Item category">${categories.map((category)=>`<option value="${category}" ${category===(item.category||"Groceries")?"selected":""}>${category==="Dining"?"Eating Out (Dining)":category}</option>`).join("")}</select><button class="button small" type="button" data-remove-receipt-item="${index}" aria-label="Remove item">×</button></div>`).join("")||`<p class="muted" id="receiptEmpty">Add at least one line item.</p>`}</div><div class="receipt-total-check"><span>Items total: <strong id="receiptItemsTotal">${cad(fromCents(itemTotal))}</strong></span><span id="receiptDifference" role="status">Difference: ${cad(fromCents(initialTotal-itemTotal))}</span></div><div id="receiptValidation" class="notice ${initialTotal===itemTotal?"":"receipt-mismatch"}" role="alert">${initialTotal===itemTotal?"Item total and receipt total agree.":`Items are short by ${cad(fromCents(initialTotal-itemTotal))}. Saving is blocked until they agree.`}</div><div class="notice" style="margin-top:12px">Original photos and PDFs up to 1.5 MB are saved with the expense and can be reopened later. Photos are read on this device. Line totals use whole cents, and amount differences are never adjusted automatically.</div><div class="modal-actions"><button type="button" class="button" data-action="modal-close">Cancel</button><button class="button primary" type="submit">Save expense</button></div></form></section></div>`;
+    return `<div class="modal-backdrop" data-action="backdrop"><section class="modal receipt-modal"><div class="modal-head"><div><div class="eyebrow">${modal==="receipt-scan"?"Receipt photo review":"Manual itemized expense"}</div><h2>${modal==="receipt-scan"?"Review receipt items":"Add an itemized expense"}</h2><p class="subtitle" style="margin-top:6px">Nothing is saved until you review the details and the cents match.</p></div><button class="modal-close" data-action="modal-close">×</button></div>${modal==="receipt-scan"?`<div class="drop-zone"><label for="receiptImage" class="button small">Take photo / choose image or PDF</label><input type="file" id="receiptImage" accept="image/*,application/pdf" capture="environment" hidden><div id="receiptOcrStatus" style="margin-top:9px">${esc(status)}</div>${attachmentPreview}</div>`:""}<form id="receiptForm"><div class="form-row" style="margin-top:15px"><label>Store or merchant</label><input id="receiptMerchant" class="input" maxlength="100" required value="${esc(draft.merchant)}"></div><div class="grid two-col"><div class="form-row"><label>Date</label><input id="receiptDate" class="input" type="date" required value="${esc(draft.date)}"></div><div class="form-row"><label>Payment account</label><select class="select" id="receiptAccount" required>${accounts.map((entry)=>`<option value="${esc(entry.id)}" ${entry.id===account?.id?"selected":""}>${esc(entry.name)} · ${esc(entry.owner)} · ${entry.kind==="liability"?"Credit card":"Cash"}</option>`).join("")}</select></div></div><div class="form-row"><label>Receipt total (CAD)</label><input id="receiptTotal" class="input" type="number" min="0.01" step="0.01" required value="${fromCents(initialTotal).toFixed(2)}"></div><div class="receipt-items-head"><strong>Line items · category and need/want mark</strong><button class="button small" type="button" data-action="receipt-add-item">+ Add item</button></div><div class="receipt-item-labels"><span>Item</span><span>Qty</span><span>Price each</span><span>Line total</span><span>Category</span><span>Need / want</span><span></span></div><div id="receiptItems">${draft.items.map((item,index)=>{const suggestion=suggestMark(draft.merchant,item.name,item.category);return `<div class="receipt-item-row"><input class="input receipt-item-name" aria-label="Item name" maxlength="120" required value="${esc(item.name)}" placeholder="Item"><input class="input receipt-item-quantity" aria-label="Quantity" type="number" min="1" max="999" step="1" required value="${Number(item.quantity||1)}" placeholder="Qty"><input class="input receipt-item-price" aria-label="Price per item" type="number" min="0" step="0.01" required value="${fromCents(Number(item.unitPriceCents??item.amountCents??0)).toFixed(2)}" placeholder="Price each"><output class="receipt-line-total">${cad(fromCents(Number(item.lineTotalCents??item.amountCents??0)))}</output><select class="select receipt-item-category" aria-label="Item category">${categories.map((category)=>`<option value="${category}" ${category===(item.category||suggestion.category)?"selected":""}>${categoryLabel(category)}</option>`).join("")}</select><select class="select receipt-item-classification" aria-label="Need or want mark"><option ${item.classification==="Essentials"||(!item.classification&&suggestion.classification==="Essentials")?"selected":""}>Essentials</option><option ${item.classification==="Wants"||(!item.classification&&suggestion.classification==="Wants")?"selected":""}>Wants</option></select><button class="button small" type="button" data-remove-receipt-item="${index}" aria-label="Remove item">×</button><small class="classification-suggestion">Suggestion: ${esc(item.classificationSource||suggestion.source)} · ${esc(item.classificationConfidence||suggestion.confidence)}</small></div>`;}).join("")||`<p class="muted" id="receiptEmpty">Add at least one line item.</p>`}</div><div class="receipt-total-check"><span>Items total: <strong id="receiptItemsTotal">${cad(fromCents(itemTotal))}</strong></span><span id="receiptDifference" role="status">Difference: ${cad(fromCents(initialTotal-itemTotal))}</span></div><div id="receiptValidation" class="notice ${initialTotal===itemTotal?"":"receipt-mismatch"}" role="alert">${initialTotal===itemTotal?"Item total and receipt total agree.":`Items are short by ${cad(fromCents(initialTotal-itemTotal))}. Saving is blocked until they agree.`}</div><div class="notice" style="margin-top:12px">Original photos and PDFs up to 1.5 MB are saved with the expense and can be reopened later. Photos are read on this device. Line totals use whole cents, and amount differences are never adjusted automatically.</div><div class="modal-actions"><button type="button" class="button" data-action="modal-close">Cancel</button><button class="button primary" type="submit">Save expense</button></div></form></section></div>`;
   }
   if (modal && modal.type === "receipt-view") {
     const receipt=(state.groceryReceipts||[]).find((item)=>item.id===modal.id);
@@ -705,7 +845,8 @@ function modalMarkup() {
     return `<div class="modal-backdrop" data-action="backdrop"><section class="modal"><div class="modal-head"><div><div class="eyebrow">Quarterly plan update</div><h2>Record an employer plan balance</h2></div><button class="modal-close" data-action="modal-close">×</button></div><form id="balanceForm"><div class="form-row"><label>Account</label><select class="select" name="id">${state.accounts.filter((a)=>a.kind==="investment").map((a)=>`<option value="${esc(a.id)}">${esc(a.name)} · ${esc(a.owner)}</option>`).join("")}</select></div><div class="grid two-col"><div class="form-row"><label>Market value (CAD)</label><input class="input" type="number" name="balance" min="0" step=".01" required></div><div class="form-row"><label>Adjusted Cost Base (CAD)</label><input class="input" type="number" name="acb" min="0" step=".01" required></div></div><div class="notice">Manual Group RRSP / ESOP balances are updated quarterly and do not affect daily chequing cash flow.</div><div class="modal-actions"><button type="button" class="button" data-action="modal-close">Cancel</button><button class="button primary">Save balance</button></div></form></section></div>`;
   }
   if (modal === "rules") {
-    return `<div class="modal-backdrop" data-action="backdrop"><section class="modal"><div class="modal-head"><div><div class="eyebrow">Auto-categorization</div><h2>Saved merchant rules</h2></div><button class="modal-close" data-action="modal-close">×</button></div><div class="metric-list">${state.merchantRules.map((rule)=>`<div class="metric-row"><strong>${esc(rule.merchant)}</strong><span class="pill">${esc(rule.category)}</span></div>`).join("") || `<p class="muted">No merchant rules yet.</p>`}</div><div class="notice">Use “Split” on a transaction and choose “Save Merchant Rule” to remember its category.</div><div class="modal-actions"><button class="button" data-action="modal-close">Done</button></div></section></div>`;
+    const form=(rule={},index="new")=>`<form class="merchant-rule-form" data-rule-index="${index}"><input class="input" name="merchant" placeholder="Merchant name" maxlength="100" required value="${esc(rule.merchant||"")}"><select class="select" name="category">${classifyCategories.map((category)=>`<option value="${esc(category)}" ${category===(rule.category||"Groceries")?"selected":""}>${esc(categoryLabel(category))}</option>`).join("")}</select><select class="select" name="classification"><option ${rule.classification!=="Wants"?"selected":""}>Essentials</option><option ${rule.classification==="Wants"?"selected":""}>Wants</option></select><button type="button" class="button small primary" data-action="rule-save">Save</button>${index==="new"?"":`<button type="button" class="button small" data-action="rule-delete">Delete</button>`}</form>`;
+    return `<div class="modal-backdrop" data-action="backdrop"><section class="modal"><div class="modal-head"><div><div class="eyebrow">Auto-categorization</div><h2>Merchant rules</h2><p class="subtitle" style="margin-top:6px">Rules affect suggestions only; confirm a mark before it is treated as final.</p></div><button class="modal-close" data-action="modal-close">×</button></div><div class="merchant-rule-list">${state.merchantRules.map((rule,index)=>form(rule,index)).join("")||`<p class="muted">No merchant rules yet.</p>`}</div><h3>Add merchant rule</h3>${form()}<div class="modal-actions"><button class="button" data-action="modal-close">Done</button></div></section></div>`;
   }
   return "";
 }
@@ -802,6 +943,13 @@ function bindPageEvents() {
   const page=app.querySelector("#pageContent");
   page.querySelectorAll("[data-screen]").forEach((button)=>button.addEventListener("click",()=>{screen=button.dataset.screen;render();}));
   page.querySelectorAll("[data-action]").forEach((button)=>button.addEventListener("click",handleAction));
+  page.querySelector("#homeStockForm")?.addEventListener("submit",async(event)=>{
+    event.preventDefault();
+    const data=new FormData(event.currentTarget);
+    state.homeStock||=[];
+    state.homeStock.unshift({id:crypto.randomUUID(),name:String(data.get("name")).trim(),quantity:Number(data.get("quantity")),expiryDate:String(data.get("expiryDate")||"")||null});
+    if(await persist()){render();showToast("Home stock updated.");}
+  });
   page.querySelectorAll("[data-edit-account]").forEach((button)=>button.addEventListener("click",()=>{modal={type:"account",id:button.dataset.editAccount};render();bindModalEvents();}));
   page.querySelectorAll("[data-edit-schedule]").forEach((button)=>button.addEventListener("click",()=>{modal={type:"schedule",id:button.dataset.editSchedule};render();bindModalEvents();}));
   page.querySelectorAll("[data-edit-transaction]").forEach((button)=>button.addEventListener("click",()=>{modal={type:"transaction",id:button.dataset.editTransaction};render();bindModalEvents();}));
@@ -885,7 +1033,7 @@ async function handleAction(event) {
     modal=action==="receipt-scan"?"receipt-scan":"receipt-entry";
     render();bindModalEvents();
   }
-  if (action === "receipt-add-item") {receiptDraft=readReceiptDraft();receiptDraft.items.push({name:"",quantity:1,unitPriceCents:0,lineTotalCents:0,category:"Groceries"});render();bindModalEvents();refreshReceiptTotals();}
+  if (action === "receipt-add-item") {receiptDraft=readReceiptDraft();receiptDraft.items.push({name:"",quantity:1,unitPriceCents:0,lineTotalCents:0,category:null,classification:null,classificationConfirmed:false});render();bindModalEvents();refreshReceiptTotals();}
   if (action === "receipt-save") await saveReceipt();
   if (action === "receipt-delete-ask") {
     event.preventDefault();
@@ -953,6 +1101,68 @@ async function handleAction(event) {
     if(await persist()){render();showToast("Recurring item removed.");}
   }
   if (action === "merchant-rules") {modal="rules";render();bindModalEvents();}
+  if (action === "rule-save") {
+    const form=event.currentTarget.closest(".merchant-rule-form");
+    const merchant=form?.elements.namedItem("merchant")?.value.trim();
+    const category=form?.elements.namedItem("category")?.value;
+    const classification=form?.elements.namedItem("classification")?.value;
+    if(!merchant){showToast("Enter a merchant name for this rule.");return;}
+    const index=form.dataset.ruleIndex==="new"?-1:Number(form.dataset.ruleIndex);
+    const rule={merchant,category,classification};
+    if(index>=0&&state.merchantRules[index])state.merchantRules[index]=rule;
+    else state.merchantRules.unshift(rule);
+    if(await persist()){modal="rules";render();bindModalEvents();showToast("Merchant rule saved; future matching entries will show its suggestion.");}
+  }
+  if (action === "rule-delete") {
+    const index=Number(event.currentTarget.closest(".merchant-rule-form")?.dataset.ruleIndex);
+    if(!Number.isSafeInteger(index)||!state.merchantRules[index]){showToast("Could not find that merchant rule.");return;}
+    state.merchantRules.splice(index,1);
+    if(await persist()){modal="rules";render();bindModalEvents();showToast("Merchant rule deleted.");}
+  }
+  if (action === "classification-bulk") {
+    const selected=[...app.querySelectorAll(".classification-select:checked")].map((input)=>({
+      transactionId:input.dataset.transactionId,
+      ...(input.dataset.itemIndex===undefined?{}:{index:Number(input.dataset.itemIndex)})
+    }));
+    const category=app.querySelector("#bulkCategory")?.value;
+    const classification=app.querySelector("#bulkMark")?.value;
+    if(!selected.length){showToast("Select one or more items from Classification review.");return;}
+    if(!category&&!classification){showToast("Choose a category, a mark, or both.");return;}
+    const response=await fetch("/api/classification/bulk",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+      items:selected,category:category||undefined,classification:classification||undefined,
+      reason:app.querySelector("#bulkReason")?.value||"Confirmed suggestion"
+    })});
+    const result=await response.json();
+    if(!response.ok){showToast(result.error||"Could not update classifications.");return;}
+    state=result.state;render();showToast(`${result.changed} item(s) classified and recorded.`);
+  }
+  if (action === "stock-delete") {
+    state.homeStock=(state.homeStock||[]).filter((item)=>item.id!==event.currentTarget.dataset.stockId);
+    if(await persist()){render();showToast("Home stock item removed.");}
+  }
+  if (action === "return-task-create") {
+    const card=event.currentTarget.closest(".flag-card");
+    const response=await fetch("/api/return-tasks",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+      transactionId:event.currentTarget.dataset.transactionId,
+      ...(event.currentTarget.dataset.itemIndex===undefined?{}:{index:Number(event.currentTarget.dataset.itemIndex)}),
+      returnBy:card?.querySelector(".return-by-input")?.value||null
+    })});
+    const result=await response.json();
+    if(!response.ok){showToast(result.error||"Could not create return reminder.");return;}
+    state=result.state;render();showToast("Consider return reminder added.");
+  }
+  if (action === "return-task-finish") {
+    const taskId=event.currentTarget.dataset.taskId;
+    const status=event.currentTarget.dataset.status;
+    const card=event.currentTarget.closest(".flag-card");
+    const response=await fetch(`/api/return-tasks/${encodeURIComponent(taskId)}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+      status,
+      reason:card?.querySelector(".kept-reason")?.value||""
+    })});
+    const result=await response.json();
+    if(!response.ok){showToast(result.error||"Could not finish the return task.");return;}
+    state=result.state;render();showToast(status==="Returned"?"Refund recorded and linked to the expense.":`Task marked ${status.toLowerCase()}.`);
+  }
   if (action === "tax-export") exportTaxCsv();
   if (action === "tax-add") {modal="receipt";render();bindModalEvents();}
   if (action === "balance-update") {modal="balance";render();bindModalEvents();}
@@ -976,6 +1186,25 @@ function bindModalEvents() {
   app.querySelectorAll(".modal-backdrop[data-action], .modal [data-action]").forEach((button)=>button.addEventListener("click",handleAction));
   app.querySelectorAll(".modal [data-modal]").forEach((button)=>button.addEventListener("click",()=>{modal=button.dataset.modal;if(modal==="import")window.selectedCsv=null;render();bindModalEvents();}));
   const accountType=app.querySelector("#accountForm select[name='accountType']");
+  const manualTransactionForm=app.querySelector("#transactionForm");
+  if(manualTransactionForm && [...manualTransactionForm.elements.namedItem("type").options].some((option)=>option.value==="expense")){
+    const markRow=document.createElement("div");
+    markRow.className="form-row";
+    markRow.innerHTML=`<label>Need or want (expense classification)</label><select class="select" name="classification"><option>Essentials</option><option>Wants</option></select><small class="classification-suggestion"></small>`;
+    const categorySelect=manualTransactionForm.elements.namedItem("category");
+    const markSelect=markRow.querySelector("select");
+    const hasExisting=modal?.type==="transaction"&&state.transactions.some((item)=>item.id===modal.id);
+    const updateSuggestion=()=>{
+      const suggestion=suggestMark(manualTransactionForm.elements.namedItem("merchant").value,"",categorySelect.value);
+      markRow.querySelector("small").textContent=`Suggestion: ${suggestion.classification||"Unclassified"} · ${suggestion.source} · ${suggestion.confidence}; confirm before saving`;
+      if(suggestion.classification&&!hasExisting)markSelect.value=suggestion.classification;
+    };
+    markSelect.value=modal?.type==="transaction"?state.transactions.find((item)=>item.id===modal.id)?.classification||"Wants":"Wants";
+    categorySelect.parentElement.parentElement.insertAdjacentElement("afterend",markRow);
+    manualTransactionForm.elements.namedItem("merchant").addEventListener("input",updateSuggestion);
+    categorySelect.addEventListener("change",updateSuggestion);
+    updateSuggestion();
+  }
   const minimumInput=app.querySelector("#minimumPaymentInput");
   const setMinimumRequirement=()=>{
     if(!accountType||!minimumInput)return;
@@ -1035,6 +1264,23 @@ function bindModalEvents() {
   app.querySelector("#receiptImage")?.addEventListener("change",scanReceiptImage);
   app.querySelector("#receiptSearch")?.addEventListener("input",(event)=>{receiptSearch=event.target.value;});
   app.querySelector("#receiptForm")?.addEventListener("submit",async(event)=>{event.preventDefault();await saveReceipt();});
+  app.querySelectorAll(".receipt-item-name").forEach((input)=>input.addEventListener("input",()=>{
+    const row=input.closest(".receipt-item-row");
+    const suggestion=suggestMark(app.querySelector("#receiptMerchant")?.value,input.value,row?.querySelector(".receipt-item-category")?.value);
+    if(!row)return;
+    row.querySelector(".classification-suggestion").textContent=`Suggestion: ${suggestion.classification||"Unclassified"} / ${categoryLabel(suggestion.category)} · ${suggestion.source} · ${suggestion.confidence}; confirm before saving`;
+    if(suggestion.classification)row.querySelector(".receipt-item-classification").value=suggestion.classification;
+    if(suggestion.category)row.querySelector(".receipt-item-category").value=suggestion.category;
+  }));
+  app.querySelector("#receiptMerchant")?.addEventListener("input",()=>{
+    app.querySelectorAll(".receipt-item-name").forEach((input)=>{
+      const row=input.closest(".receipt-item-row");
+      const suggestion=suggestMark(app.querySelector("#receiptMerchant").value,input.value,row.querySelector(".receipt-item-category").value);
+      row.querySelector(".classification-suggestion").textContent=`Suggestion: ${suggestion.classification||"Unclassified"} / ${categoryLabel(suggestion.category)} · ${suggestion.source} · ${suggestion.confidence}; confirm before saving`;
+      if(suggestion.classification)row.querySelector(".receipt-item-classification").value=suggestion.classification;
+      row.querySelector(".receipt-item-category").value=suggestion.category;
+    });
+  });
   app.querySelectorAll("#receiptTotal,.receipt-item-quantity,.receipt-item-price").forEach((input)=>
     input.addEventListener("input",()=>{if(input.id==="receiptTotal")receiptTotalTouched=true;refreshReceiptTotals();}));
   app.querySelectorAll("[data-remove-receipt-item]").forEach(button=>button.addEventListener("click",()=>{
@@ -1052,7 +1298,9 @@ function readReceiptDraft() {
       quantity,
       unitPriceCents,
       lineTotalCents:Number.isSafeInteger(quantity)&&quantity>0?quantity*unitPriceCents:0,
-      category:row.querySelector(".receipt-item-category").value
+      category:row.querySelector(".receipt-item-category").value,
+      classification:row.querySelector(".receipt-item-classification").value,
+      classificationConfirmed:false
     };
   });
   return {
@@ -1264,9 +1512,11 @@ async function saveManualTransaction(event) {
     debtAccount.balance=finalDebt;
   }
   if(account.kind==="liability"&&!account.startingBalance&&type==="expense")account.startingBalance=subtractMoney(account.balance,amountValue);
-  const updated={...(existing||{}),id:id||`manual-${Date.now()}`,date:String(data.get("date")),merchant:String(data.get("merchant")).trim(),amount:amountValue,category,type,owner:account.owner,account:account.name,status:"Actual",note:"Manual entry",manual:true,...(entryType==="debt"?{debtAccountId:debtAccount.id}:{})};
+  const suggestion=suggestMark(String(data.get("merchant")).trim(),"",category);
+  const classification=entryType==="expense"?String(data.get("classification")||existing?.classification||suggestion.classification||"Wants"):existing?.classification;
+  const updated={...(existing||{}),id:id||`manual-${Date.now()}`,date:String(data.get("date")),merchant:String(data.get("merchant")).trim(),amount:amountValue,category,type,owner:account.owner,account:account.name,status:"Actual",note:"Manual entry",manual:true,...(entryType==="expense"?{classification,classificationSource:suggestion.source,classificationConfidence:suggestion.confidence,classificationConfirmed:existing?.classification===classification?existing.classificationConfirmed:false}:{}),...(entryType==="debt"?{debtAccountId:debtAccount.id}:{})};
   if(existing)state.transactions[state.transactions.indexOf(existing)]=updated;else state.transactions.unshift(updated);
-  if(!await persist())return;
+  if(!await persist({classificationChangeReason:"Updated in the manual ledger form"}))return;
   modal="";render();showToast("Ledger entry and account balance saved.");
 }
 async function confirmReceiptMatch(receiptId, transactionId) {
@@ -1309,13 +1559,22 @@ async function saveSplit() {
   const transaction=state.transactions.find((item)=>item.id===modal.splitId);
   const receipt=receiptForTransaction(transaction);
   if(receipt?.items?.length){
-    const itemCategories=[...app.querySelectorAll(".split-item-category")].map((input)=>input.value);
-    if(itemCategories.length!==receipt.items.length){showToast("Choose a category for every line item.");return;}
-    const response=await fetch(`/api/transactions/${encodeURIComponent(transaction.id)}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({itemCategories})});
+    const categories=[...app.querySelectorAll(".split-item-category")];
+    const classifications=[...app.querySelectorAll(".split-item-classification")];
+    const reason=app.querySelector("#splitChangeReason")?.value.trim();
+    if(categories.length!==receipt.items.length||classifications.length!==receipt.items.length){showToast("Choose a category and mark for every line item.");return;}
+    if(!reason){showToast("Record a reason for changing item classifications or categories.");return;}
+    const itemUpdates=receipt.items.map((item,index)=>({
+      index,
+      category:categories[index].value,
+      classification:classifications[index].value,
+      confirmed:true
+    }));
+    const response=await fetch(`/api/transactions/${encodeURIComponent(transaction.id)}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({itemUpdates,reason})});
     const result=await response.json();
     if(!response.ok){showToast(result.error);return;}
     state=result.state;
-    modal="";render();showToast("Item categories saved. The expense total is unchanged.");
+    modal="";render();showToast("Item categories and marks saved. The expense total is unchanged.");
     return;
   }
   const lines=readSplitLines();
@@ -1330,15 +1589,17 @@ async function saveSplit() {
   }
   modal="";render();showToast("Transaction split saved. Category totals remain tied to the original purchase.");
 }
-async function persist() {
+async function persist({classificationChangeReason}={}) {
   try {
     const response=await fetch("/api/state",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({
       budget:state.budget,
       schedule:state.schedule,
       merchantRules:state.merchantRules,
+      homeStock:state.homeStock,
       taxDeductions:state.taxDeductions,
       accounts:state.accounts,
       transactions:state.transactions,
+      classificationChangeReason,
       debtPlanExtraMonthly:state.debtPlanExtraMonthly
     })});
     const result=await response.json();

@@ -4,6 +4,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const HouseholdMath = require("./public/household-math.js");
 const ReceiptValidation = require("./lib/receipt-validation.cjs");
+const Classification = require("./lib/classification.cjs");
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
@@ -87,6 +88,7 @@ function normalizeMoneyState(state) {
   (state.history || []).forEach((item) => addCents(item, "netWorth"));
   (state.budget || []).forEach((item) => { item.target = HouseholdMath.fixedDecimal(String(item.target), 2); });
   addCents(state, "debtPlanExtraMonthly");
+  Classification.classifyState(state);
   return state;
 }
 
@@ -415,6 +417,25 @@ const server = http.createServer(async (req, res) => {
       if (req.method === "POST" && url.pathname === "/api/receipts") {
         const input = ReceiptValidation.validateReceiptInput(await body(req));
         const state = readData();
+        input.items = input.items.map((item) => {
+          const suggestion = Classification.suggestClassification({
+            merchant: input.merchant,
+            itemName: item.name,
+            category: item.category,
+            merchantRules: state.merchantRules,
+            transactions: state.transactions,
+            receipts: state.groceryReceipts
+          });
+          const fastFood = suggestion.category === "Dining" && suggestion.classification === "Wants";
+          return {
+            ...item,
+            category: fastFood ? "Dining" : item.category || suggestion.category,
+            classification: fastFood ? "Wants" : item.classification || suggestion.classification,
+            classificationConfidence: suggestion.confidence,
+            classificationSource: suggestion.source,
+            classificationConfirmed: item.classificationConfirmed === true
+          };
+        });
         const account = state.accounts.find((item) => item.id === input.accountId && item.owner === input.owner);
         if (!account || !["cash", "liability"].includes(account.kind)) {
           return send(res, 400, { error: "Choose an existing chequing, savings, or credit-card account." });
@@ -433,7 +454,12 @@ const server = http.createServer(async (req, res) => {
           amountCents: input.receiptTotalCents,
           category: categories.length === 1 ? categories[0] : "Split purchase",
           splits: input.items.map((item) => ({
+            name: item.name,
             category: item.category,
+            classification: item.classification,
+            classificationConfidence: item.classificationConfidence,
+            classificationSource: item.classificationSource,
+            classificationConfirmed: item.classificationConfirmed,
             amount: item.lineTotalCents / 100,
             amountCents: item.lineTotalCents
           })),
@@ -524,6 +550,74 @@ const server = http.createServer(async (req, res) => {
         writeData(state);
         return send(res, 200, { ok: true });
       }
+      if (req.method === "POST" && url.pathname === "/api/classification/bulk") {
+        const update = await body(req);
+        const state = readData();
+        const updates = Array.isArray(update.items) ? update.items : [];
+        if ((!update.category && !update.classification) || !String(update.reason || "").trim()) {
+          return send(res, 400, { error: "Choose a category or mark and record a reason for the classification change." });
+        }
+        const grouped = new Map();
+        for (const item of updates) {
+          const transaction = state.transactions.find((entry) => entry.id === item.transactionId);
+          if (!transaction) return send(res, 404, { error: "One of the selected expenses no longer exists." });
+          if (!grouped.has(transaction.id)) grouped.set(transaction.id, { transaction, items: [] });
+          grouped.get(transaction.id).items.push({
+            index: Number.isSafeInteger(item.index) ? item.index : undefined,
+            ...(update.category ? { category: update.category } : {}),
+            ...(update.classification ? { classification: update.classification } : {}),
+            confirmed: true
+          });
+        }
+        try {
+          for (const { transaction, items } of grouped.values()) {
+            Classification.applyClassificationUpdates(state, transaction, items, {
+              reason: update.reason,
+              changedBy: user
+            });
+          }
+        } catch (error) {
+          return send(res, error.status || 400, { error: error.message });
+        }
+        writeData(state);
+        return send(res, 200, { state: publicState(state), changed: updates.length });
+      }
+      if (req.method === "POST" && url.pathname === "/api/return-tasks") {
+        const input = await body(req);
+        const state = readData();
+        const transaction = state.transactions.find((item) => item.id === input.transactionId);
+        if (!transaction || transaction.type !== "expense") return send(res, 404, { error: "Choose an expense to consider returning." });
+        try {
+          const task = Classification.createReturnTask(state, {
+            transaction,
+            index: Number.isSafeInteger(input.index) ? input.index : undefined,
+            returnBy: input.returnBy || null,
+            changedBy: user
+          });
+          writeData(state);
+          return send(res, 201, { task, state: publicState(state) });
+        } catch (error) {
+          return send(res, error.status || 400, { error: error.message });
+        }
+      }
+      if (req.method === "PATCH" && url.pathname.startsWith("/api/return-tasks/")) {
+        const id = decodeURIComponent(url.pathname.split("/").pop());
+        const input = await body(req);
+        const state = readData();
+        const task = (state.returnTasks || []).find((item) => item.id === id);
+        if (!task) return send(res, 404, { error: "Return task not found." });
+        try {
+          Classification.finishReturnTask(state, task, {
+            status: input.status,
+            reason: input.reason,
+            changedBy: user
+          });
+          writeData(state);
+          return send(res, 200, { task, state: publicState(state) });
+        } catch (error) {
+          return send(res, error.status || 400, { error: error.message });
+        }
+      }
       if (req.method === "PUT" && url.pathname === "/api/state") {
         const update = await body(req);
         const state = readData();
@@ -540,7 +634,24 @@ const server = http.createServer(async (req, res) => {
           }
           state.schedule = update.schedule;
         }
-        if (Array.isArray(update.merchantRules)) state.merchantRules = update.merchantRules.slice(0, 1000);
+        if (Array.isArray(update.merchantRules)) {
+          if (update.merchantRules.length > 1000 || update.merchantRules.some((rule) =>
+            !String(rule.merchant || "").trim() || rule.merchant.length > 100 ||
+            !ReceiptValidation.EXPENSE_CATEGORIES.has(rule.category) ||
+            !["Essentials", "Wants"].includes(rule.classification))) {
+            return send(res, 400, { error: "Merchant rules need a name, existing category, and Essentials or Wants mark." });
+          }
+          state.merchantRules = update.merchantRules;
+        }
+        if (Array.isArray(update.homeStock)) {
+          if (update.homeStock.length > 2000 || update.homeStock.some((item) =>
+            !String(item.name || "").trim() || item.name.length > 120 ||
+            !Number.isSafeInteger(Number(item.quantity)) || Number(item.quantity) < 0 ||
+            (item.expiryDate && !/^\d{4}-\d{2}-\d{2}$/.test(item.expiryDate)))) {
+            return send(res, 400, { error: "Home stock items need a name, non-negative whole-number quantity, and valid optional expiry date." });
+          }
+          state.homeStock = update.homeStock;
+        }
         if (Array.isArray(update.taxDeductions)) state.taxDeductions = update.taxDeductions.slice(0, 5000);
         if (Array.isArray(update.accounts)) {
           if (update.accounts.some((account) => account.accountType === "Credit card" &&
@@ -571,6 +682,13 @@ const server = http.createServer(async (req, res) => {
             !["Partner A", "Partner B", "Joint"].includes(transaction.owner)
           )) {
             return send(res, 400, { error: "Ledger entries need a date, description, positive amount, type, and valid owner." });
+          }
+          const priorTransactions = new Map(state.transactions.map((transaction) => [transaction.id, transaction]));
+          for (const transaction of update.transactions) {
+            const prior = priorTransactions.get(transaction.id);
+            if (prior) Classification.recordTransactionClassificationChanges(
+              state, prior, transaction, String(update.classificationChangeReason || "Updated in ledger"), user
+            );
           }
           state.transactions = update.transactions;
         }
@@ -660,9 +778,27 @@ const server = http.createServer(async (req, res) => {
         const state = readData();
         const transaction = state.transactions.find((t) => t.id === id);
         if (!transaction) return send(res, 404, { error: "Transaction not found." });
-        if (typeof update.category === "string") transaction.category = update.category.slice(0, 60);
-        if (Array.isArray(update.itemCategories)) {
-          ReceiptValidation.applyItemCategories(state, transaction, update.itemCategories);
+        if (Array.isArray(update.itemUpdates)) {
+          if (!String(update.reason || "").trim()) return send(res, 400, { error: "Record a reason for changing an item classification or category." });
+          try {
+            Classification.applyClassificationUpdates(state, transaction, update.itemUpdates, { reason:update.reason, changedBy:user });
+          } catch (error) {
+            return send(res, error.status || 400, { error:error.message });
+          }
+        } else if (typeof update.category === "string") {
+          Classification.recordClassificationChange(state, {
+            target:transaction.id,targetName:transaction.merchant,field:"category",
+            before:transaction.category,after:update.category.slice(0,60),
+            reason:String(update.reason||"Category updated").trim(),changedBy:user
+          });
+          transaction.category = update.category.slice(0, 60);
+        } else if (Array.isArray(update.itemCategories)) {
+          const itemUpdates=update.itemCategories.map((category,index)=>({index,category,confirmed:true}));
+          try {
+            Classification.applyClassificationUpdates(state,transaction,itemUpdates,{reason:String(update.reason||"Category updated"),changedBy:user});
+          } catch (error) {
+            return send(res,error.status||400,{error:error.message});
+          }
         } else if (Array.isArray(update.splits)) {
           if ((state.groceryReceipts || []).some((receipt) => receipt.expenseTransactionId === transaction.id || receipt.id === transaction.receiptId)) {
             return send(res, 400, { error: "This expense has line items. Change each item's category instead of splitting the whole total." });

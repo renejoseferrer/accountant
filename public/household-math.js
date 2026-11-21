@@ -95,46 +95,91 @@
       sum + (categories.includes(split.category) ? shownSplits[index] : 0), 0);
   }
 
+  function transactionClassificationCents(transaction, classification, view = "Combined Household", jointShare = 50) {
+    const splits = Array.isArray(transaction.splits) && transaction.splits.length ? transaction.splits : null;
+    const originalCents = centsFor(transaction, "amount");
+    const refundedCents = Math.max(0, Math.min(originalCents, Number(transaction.refundedCents) || 0));
+    if (!splits || splits.reduce((sum, split) => sum + centsFor(split, "amount"), 0) !== originalCents) {
+      const netCents = originalCents - refundedCents;
+      return transaction.classification === classification
+        ? shareCents(netCents, transaction.owner, view, jointShare)
+        : 0;
+    }
+
+    const netSplits = splits.map((split) => {
+      const refunded = Math.max(0, Math.min(centsFor(split, "amount"), Number(split.refundedCents) || 0));
+      return { ...split, amountCents: centsFor(split, "amount") - refunded, amount: (centsFor(split, "amount") - refunded) / 100 };
+    });
+    const netTotalCents = netSplits.reduce((sum, split) => sum + centsFor(split, "amount"), 0);
+    const shownSplits = splitShares(netSplits, transaction.owner, view, jointShare, shareCents(netTotalCents, transaction.owner, view, jointShare));
+    return netSplits.reduce((sum, split, index) =>
+      sum + (split.classification === classification ? shownSplits[index] : 0), 0);
+  }
+
+  function transactionNetExpenseCents(transaction, view = "Combined Household", jointShare = 50) {
+    const grossCents = centsFor(transaction, "amount");
+    const refunds = Math.max(0, Math.min(grossCents, Number(transaction.refundedCents) || 0));
+    return shareCents(grossCents - refunds, transaction.owner, view, jointShare);
+  }
+
   function calculateLedger(state, view = "Combined Household", jointShare = 50) {
     const incomeByCategory = {};
     const expensesByCategory = {};
     const splitMismatches = [];
     let incomeCents = 0;
     let expenseCents = 0;
+    let essentialsCents = 0;
+    let wantsCents = 0;
 
     for (const transaction of state.transactions || []) {
       if (!countsTowardSpending(transaction)) continue;
       if (transaction.status !== "Actual" || !["income", "expense"].includes(transaction.type)) continue;
-      const amountCents = shareCents(centsFor(transaction, "amount"), transaction.owner, view, jointShare);
-      if (!amountCents) continue;
+      const grossAmountCents = shareCents(centsFor(transaction, "amount"), transaction.owner, view, jointShare);
+      if (!grossAmountCents) continue;
       if (transaction.type === "income") {
-        incomeCents += amountCents;
+        incomeCents += grossAmountCents;
         const category = transaction.category || "Uncategorized";
-        incomeByCategory[category] = (incomeByCategory[category] || 0) + amountCents;
+        incomeByCategory[category] = (incomeByCategory[category] || 0) + grossAmountCents;
         continue;
       }
 
+      const totalCents = centsFor(transaction, "amount");
+      const refundCents = Math.max(0, Math.min(totalCents, Number(transaction.refundedCents) || 0));
+      const amountCents = transactionNetExpenseCents(transaction, view, jointShare);
       expenseCents += amountCents;
       const splits = Array.isArray(transaction.splits) && transaction.splits.length ? transaction.splits : null;
-      const splitTotal = splits ? splits.reduce((sum, split) => sum + centsFor(split, "amount"), 0) : amountCents;
-      if (splits && splitTotal !== centsFor(transaction, "amount")) {
+      const splitTotal = splits ? splits.reduce((sum, split) => sum + centsFor(split, "amount"), 0) : totalCents;
+      if (splits && splitTotal !== totalCents) {
         splitMismatches.push(transaction.id);
       }
-      if (!splits || splitTotal !== centsFor(transaction, "amount")) {
+      if (!splits || splitTotal !== totalCents) {
         const category = transaction.category || "Uncategorized";
         expensesByCategory[category] = (expensesByCategory[category] || 0) + amountCents;
+        if (transaction.classification === "Essentials") essentialsCents += amountCents;
+        if (transaction.classification === "Wants") wantsCents += amountCents;
         continue;
       }
-      const shownSplits = splitShares(splits, transaction.owner, view, jointShare, amountCents);
-      for (const [index, split] of splits.entries()) {
+      const netSplits = splits.map((split) => {
+        const splitCents = centsFor(split, "amount");
+        const splitRefunded = Math.max(0, Math.min(splitCents, Number(split.refundedCents) || 0));
+        return { ...split, amountCents: splitCents - splitRefunded, amount: (splitCents - splitRefunded) / 100 };
+      });
+      const netSplitTotal = netSplits.reduce((sum, split) => sum + centsFor(split, "amount"), 0);
+      const shownSplits = splitShares(netSplits, transaction.owner, view, jointShare, amountCents);
+      for (const [index, split] of netSplits.entries()) {
         const category = split.category || "Uncategorized";
         expensesByCategory[category] = (expensesByCategory[category] || 0) + shownSplits[index];
+        if (split.classification === "Essentials") essentialsCents += shownSplits[index];
+        if (split.classification === "Wants") wantsCents += shownSplits[index];
       }
+      if (netSplitTotal !== totalCents - refundCents) splitMismatches.push(transaction.id);
     }
 
     return {
       incomeCents,
       expenseCents,
+      essentialsCents,
+      wantsCents,
       netCents: incomeCents - expenseCents,
       incomeByCategoryCents: incomeByCategory,
       expensesByCategoryCents: expensesByCategory,
@@ -199,6 +244,8 @@
     shareCents,
     splitShares,
     transactionCategoryCents,
+    transactionClassificationCents,
+    transactionNetExpenseCents,
     signedTransactionCents,
     sortTransactionsBySignedAmount,
     toBasisPoints,
