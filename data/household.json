@@ -6,6 +6,7 @@
       "name": "Everyday Chequing",
       "institution": "Royal Bank of Canada",
       "kind": "cash",
+      "assetLiquidity": "liquid",
       "bucket": "Chequing",
       "owner": "Partner A",
       "balance": 8420,
@@ -17,6 +18,7 @@
       "name": "Shared Household Chequing",
       "institution": "Tangerine",
       "kind": "cash",
+      "assetLiquidity": "liquid",
       "bucket": "Chequing",
       "owner": "Joint",
       "balance": 3250,
@@ -28,6 +30,7 @@
       "name": "High-Interest Savings",
       "institution": "EQ Bank",
       "kind": "cash",
+      "assetLiquidity": "liquid",
       "bucket": "Savings",
       "owner": "Partner B",
       "balance": 6000,
@@ -39,6 +42,7 @@
       "name": "Partner B Chequing",
       "institution": "CIBC",
       "kind": "cash",
+      "assetLiquidity": "liquid",
       "bucket": "Chequing",
       "owner": "Partner B",
       "balance": 4600,
@@ -50,6 +54,7 @@
       "name": "Household Emergency Fund",
       "institution": "Tangerine",
       "kind": "cash",
+      "assetLiquidity": "liquid",
       "bucket": "Emergency",
       "owner": "Joint",
       "balance": 5000,
@@ -61,6 +66,7 @@
       "name": "TFSA · Self-directed",
       "institution": "Wealthsimple",
       "kind": "investment",
+      "assetLiquidity": "illiquid",
       "accountType": "TFSA",
       "owner": "Partner A",
       "balance": 28500,
@@ -78,6 +84,7 @@
       "name": "Group RRSP",
       "institution": "Sun Life",
       "kind": "investment",
+      "assetLiquidity": "illiquid",
       "accountType": "RRSP",
       "owner": "Partner B",
       "balance": 41200,
@@ -96,6 +103,7 @@
       "name": "First Home Savings Account",
       "institution": "Questrade",
       "kind": "investment",
+      "assetLiquidity": "illiquid",
       "accountType": "FHSA",
       "owner": "Partner B",
       "balance": 12500,
@@ -120,6 +128,7 @@
       "apr": "19.99",
       "minimumPayment": 35,
       "dueDate": "2026-11-24",
+      "statementDate": "2026-11-27",
       "last4": "4312"
     },
     {
@@ -182,7 +191,15 @@
       "owner": "Partner A",
       "account": "Everyday Chequing",
       "type": "income",
-      "status": "Actual"
+      "status": "Actual",
+      "isPay": true,
+      "payAllocationCents": {
+        "Needs": 211200,
+        "Wants": 19200,
+        "Debt Repayment": 38400,
+        "Savings": 57600,
+        "Investments": 57600
+      }
     },
     {
       "id": "t13",
@@ -193,7 +210,15 @@
       "owner": "Partner B",
       "account": "Partner B Chequing",
       "type": "income",
-      "status": "Actual"
+      "status": "Actual",
+      "isPay": true,
+      "payAllocationCents": {
+        "Needs": 170500,
+        "Wants": 15500,
+        "Debt Repayment": 31000,
+        "Savings": 46500,
+        "Investments": 46500
+      }
     },
     {
       "id": "t14",
@@ -286,6 +311,7 @@
       "category": "Investment contribution",
       "owner": "Partner A",
       "account": "Everyday Chequing",
+      "targetAccountId": "tfsa-a",
       "type": "transfer",
       "status": "Actual",
       "note": "Routed to TFSA · excluded from expenses"
@@ -497,6 +523,18 @@
     {
       "month": "Nov",
       "netWorth": 98630
+    }
+  ],
+  "accountantMessage": {
+    "date": "2026-11-25",
+    "text": "Welcome to your household workspace. Add a note from your accountant here when ready."
+  },
+  "creditScoreHistory": [
+    {
+      "id": "score-oct",
+      "score": 690,
+      "date": "2026-10-25",
+      "source": "bank app"
     }
   ]
 }

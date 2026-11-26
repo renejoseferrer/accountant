@@ -48,6 +48,46 @@
     return sign * Math.floor((Math.abs(numerator) + Math.floor(denominator / 2)) / denominator);
   }
 
+  function allocateBasisPointCents(totalCents, basisPoints) {
+    if (!Number.isSafeInteger(totalCents) || totalCents < 0 ||
+        !Array.isArray(basisPoints) || basisPoints.some((value) => !Number.isSafeInteger(value) || value < 0) ||
+        basisPoints.reduce((sum, value) => sum + value, 0) !== 10000) {
+      throw new Error("Allocation shares must be non-negative basis points totaling 10000.");
+    }
+    const allocations = basisPoints.map((share, index) => {
+      const partial = (totalCents % 10000) * share;
+      return {
+        index,
+        cents: Math.floor(totalCents / 10000) * share + Math.floor(partial / 10000),
+        remainder: partial % 10000
+      };
+    });
+    const remaining = totalCents - allocations.reduce((sum, item) => sum + item.cents, 0);
+    allocations.slice().sort((left, right) => right.remainder - left.remainder || left.index - right.index)
+      .slice(0, remaining)
+      .forEach((item) => { allocations[item.index].cents += 1; });
+    return allocations.map((item) => item.cents);
+  }
+
+  function budgetCategoryFor(category, merchant, classification) {
+    const categoryText = String(category || "").toLowerCase();
+    const text = `${categoryText} ${merchant || ""}`.toLowerCase();
+    if (/debt repayment/.test(categoryText)) return "Debt Repayment";
+    if (/investment contribution|general savings/.test(categoryText)) return "Savings & Investments";
+    if (/groceries|dining|eating out/.test(categoryText)) {
+      return classification === "Essentials" ? "Food — Needs" : "Food — Wants";
+    }
+    if (/housing|utilities/.test(categoryText)) {
+      return /hydro|electric|water|internet|utility|gas bill/.test(text) ? "Utilities" : "Housing";
+    }
+    if (/transit|fuel|transport/.test(categoryText)) return "Transportation";
+    if (/insurance/.test(text)) return "Insurance";
+    if (/medical|health/.test(categoryText)) return "Health & Personal Care";
+    if (/childcare/.test(categoryText)) return "Family & Childcare";
+    if (/subscription|shopping/.test(categoryText)) return "Entertainment & Leisure";
+    return "Miscellaneous / Irregular";
+  }
+
   function shareCents(cents, owner, view = "Combined Household", jointShare = 50) {
     if (view === "Combined Household" || owner !== "Joint") {
       if (view === "Combined Household" || owner === view.replace(" Only", "")) return cents;
@@ -238,6 +278,8 @@
     calculateLedger,
     countsTowardSpending,
     calculateBudgetPlan,
+    allocateBasisPointCents,
+    budgetCategoryFor,
     centsFor,
     fixedDecimal,
     isNonNegativeDecimal,

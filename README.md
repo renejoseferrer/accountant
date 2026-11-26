@@ -55,6 +55,15 @@ It also continues to work as a normal website on desktop and mobile browsers.
 
 Expected paydays and bills remain separate from actual balances. The app includes the 55/5/10/15/15 budget split, transaction routing, reconciliation, debt and investment views, and tax receipt export.
 
+## Budgeting, debts, and investments
+
+- The six main tabs are Overview, Balance Sheet, Smart Ledger, Budgeting, Debts, and Investments. Budgeting contains Budget, Expenses, and Receipts pages; Debts contains Debt Snowball and Credit Score.
+- Add received pay in Budgeting or Smart Ledger. Salary/paycheque entries are assigned to Needs, Wants, Debt Repayment, Savings, and Investments using the configured budget shares; allocations are stored as integer cents and displayed in the ledger.
+- Edit category allocations from Budgeting. Each group must total 100%; overages are highlighted, and a confirmed cover action moves planned cents between categories without increasing the total plan.
+- Credit Score is a history and planning view, not a bureau connection. Its estimate is explicitly labeled unofficial; recorded scores can be entered manually.
+- Add investment contributions from Investments. Each is a neutral account-to-account transfer shown in Smart Ledger and Budgeting, not a household expense.
+- Close an account to exclude its balance from current totals while preserving linked history. Remove an account only when it has no linked records.
+
 ## Debt plan, manual entries, and grocery receipts
 
 - The Debt Snowball screen sorts accounts and personal loans from smallest to largest by default, shows minimum payments and balance progress, and lets you record a monthly extra amount or choose another sort.

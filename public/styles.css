@@ -33,6 +33,15 @@ button { cursor: pointer; }
 .nav-link { border:0; color:#68756e; background:transparent; width:100%; min-height:42px; border-radius:10px; display:flex; align-items:center; gap:12px; padding:0 12px; text-align:left; font-weight:600; }
 .nav-link:hover { background:#f0f4f1; color:var(--ink); }
 .nav-link.active { background:var(--green-soft); color:var(--green-dark); }
+.page-tabs { display:flex; gap:8px; margin:0 0 16px; border-bottom:1px solid var(--line); }
+.page-tab { border:0; border-bottom:2px solid transparent; background:transparent; color:var(--muted); padding:10px 14px; font:inherit; font-weight:650; cursor:pointer; }
+.page-tab.active { border-bottom-color:var(--green); color:var(--green-dark); }
+.accountant-message { padding:18px 20px; color:var(--ink); }
+.accountant-message small { color:var(--muted); }
+.accountant-message p { margin:8px 0 0; line-height:1.55; }
+.credit-score-value { display:flex; align-items:baseline; gap:10px; padding:2px 20px 20px; font-size:42px; font-weight:750; color:var(--ink); }
+.credit-score-value span { font-size:15px; color:var(--green); }
+.chart-labels small { display:block; font-size:9px; color:var(--muted); white-space:nowrap; }
 .nav-icon { width:18px; text-align:center; font-size:16px; }
 .sidebar-bottom { margin-top:auto; }
 .sync-card { padding:14px; background:#f2f6f2; border-radius:13px; margin:0 4px 16px; }

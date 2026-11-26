@@ -15,6 +15,25 @@ test("fixed decimal rates and money survive legacy floating-point values", () =>
   assert.equal(math.toCents("96.42"), 9642);
 });
 
+test("paycheck allocations preserve every cent across the five budget shares", () => {
+  const shares = [5500, 500, 1000, 1500, 1500];
+  const allocated = math.allocateBasisPointCents(100001, shares);
+  assert.deepEqual(allocated, [55001, 5000, 10000, 15000, 15000]);
+  assert.equal(allocated.reduce((sum, cents) => sum + cents, 0), 100001);
+  assert.deepEqual(math.allocateBasisPointCents(1, shares), [1, 0, 0, 0, 0]);
+  assert.throws(() => math.allocateBasisPointCents(100, [5500, 500, 1000, 1500, 1499]), /totaling 10000/);
+});
+
+test("category plan maps title-cased ledger categories to their intended budget groups", () => {
+  assert.equal(math.budgetCategoryFor("Groceries", "Metro Grocery", "Essentials"), "Food — Needs");
+  assert.equal(math.budgetCategoryFor("Groceries", "Metro Grocery", "Wants"), "Food — Wants");
+  assert.equal(math.budgetCategoryFor("Dining", "Coffee Culture", "Wants"), "Food — Wants");
+  assert.equal(math.budgetCategoryFor("Housing & Utilities", "November rent", "Essentials"), "Housing");
+  assert.equal(math.budgetCategoryFor("Housing & Utilities", "Home internet", "Essentials"), "Utilities");
+  assert.equal(math.budgetCategoryFor("Debt repayment", "Visa payment"), "Debt Repayment");
+  assert.equal(math.budgetCategoryFor("Investment contribution", "Monthly TFSA contribution"), "Savings & Investments");
+});
+
 test("demo Visa rate and minimum payment are exact", () => {
   const visa = demo.accounts.find((account) => account.id === "visa-j");
   const vehicle = demo.accounts.find((account) => account.id === "car-a");
